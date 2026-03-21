@@ -55,8 +55,16 @@ Or install from source (for contributors):
 ```bash
 git clone https://github.com/empathetech/executive-in-a-box.git
 cd executive-in-a-box
+python3 -m venv .venv
+source .venv/bin/activate   # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
+
+A "virtual environment" (`.venv`) keeps this tool's dependencies separate
+from everything else on your machine. You'll need to run
+`source .venv/bin/activate` each time you open a new terminal before using
+`exec-in-a-box`. If you see "command not found" when running `exec-in-a-box`,
+that's probably why — activate the virtual environment first.
 
 **What you should see:** A success message ending with
 `Successfully installed executive-in-a-box`. If you see an error about `pip`

@@ -96,6 +96,8 @@ Or install from source:
 ```bash
 git clone https://github.com/empathetech/executive-in-a-box.git
 cd executive-in-a-box
+python3 -m venv .venv
+source .venv/bin/activate   # On Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
