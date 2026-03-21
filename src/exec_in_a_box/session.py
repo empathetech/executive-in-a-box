@@ -149,7 +149,39 @@ def _send_to_slack(response, config, archetype) -> None:
         print("  Cancelled.")
         return
 
-    print(f"  Sending to Slack...", end=" ", flush=True)
+    # Always preview before sending
+    print()
+    print("  --- Preview ---")
+    print(f"  {message}")
+    print("  ---------------")
+    print()
+    confirm = _input(
+        "  Send this to Slack? "
+        "[Y]es / [E]dit / [C]ancel: "
+    ).strip().lower()
+
+    if confirm in ("e", "edit"):
+        print()
+        print("  Type the corrected message:")
+        print()
+        message = _input("  Message: ").strip()
+        if not message:
+            print("  Empty message. Cancelled.")
+            return
+        print()
+        print("  --- Preview ---")
+        print(f"  {message}")
+        print("  ---------------")
+        print()
+        confirm = _input(
+            "  Send this to Slack? [Y/N]: "
+        ).strip().lower()
+
+    if confirm not in ("y", "yes"):
+        print("  Cancelled.")
+        return
+
+    print("  Sending to Slack...", end=" ", flush=True)
     success = send_message(
         message,
         archetype_slug=config.archetype_slug,

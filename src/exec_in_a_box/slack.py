@@ -25,10 +25,10 @@ ICON_BASE = (
 )
 
 ARCHETYPE_ICONS = {
-    "operator": f"{ICON_BASE}/ceo-operator.svg",
-    "visionary": f"{ICON_BASE}/ceo-visionary.svg",
-    "advocate": f"{ICON_BASE}/ceo-advocate.svg",
-    "analyst": f"{ICON_BASE}/ceo-analyst.svg",
+    "operator": f"{ICON_BASE}/ceo-operator.png",
+    "visionary": f"{ICON_BASE}/ceo-visionary.png",
+    "advocate": f"{ICON_BASE}/ceo-advocate.png",
+    "analyst": f"{ICON_BASE}/ceo-analyst.png",
 }
 
 
