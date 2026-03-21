@@ -9,7 +9,6 @@ triggered by explicit user action.
 
 from __future__ import annotations
 
-import json
 import sys
 
 import httpx
@@ -17,6 +16,20 @@ import keyring
 
 SERVICE_NAME = "executive-in-a-box"
 KEYRING_USER = "slack-webhook-url"
+
+# GitHub raw URL base for archetype profile pics.
+# Slack webhooks support icon_url for custom avatars.
+ICON_BASE = (
+    "https://raw.githubusercontent.com/"
+    "empathetech/executive-in-a-box/main/assets"
+)
+
+ARCHETYPE_ICONS = {
+    "operator": f"{ICON_BASE}/ceo-operator.svg",
+    "visionary": f"{ICON_BASE}/ceo-visionary.svg",
+    "advocate": f"{ICON_BASE}/ceo-advocate.svg",
+    "analyst": f"{ICON_BASE}/ceo-analyst.svg",
+}
 
 
 def get_webhook_url() -> str | None:
@@ -32,8 +45,15 @@ def store_webhook_url(url: str) -> None:
     keyring.set_password(SERVICE_NAME, KEYRING_USER, url)
 
 
-def send_message(message: str) -> bool:
+def send_message(
+    message: str,
+    archetype_slug: str | None = None,
+    archetype_name: str | None = None,
+) -> bool:
     """Send a message to the configured Slack webhook.
+
+    If archetype_slug is provided, the message is posted with
+    the archetype's profile pic and display name.
 
     Returns True on success, False on failure (with error printed).
     """
@@ -45,10 +65,18 @@ def send_message(message: str) -> bool:
         )
         return False
 
+    payload: dict = {"text": message}
+
+    # Set archetype avatar and name if available
+    if archetype_slug and archetype_slug in ARCHETYPE_ICONS:
+        payload["icon_url"] = ARCHETYPE_ICONS[archetype_slug]
+    if archetype_name:
+        payload["username"] = archetype_name
+
     try:
         response = httpx.post(
             webhook_url,
-            json={"text": message},
+            json=payload,
             timeout=10.0,
         )
         if response.status_code == 200 and response.text == "ok":
@@ -87,9 +115,6 @@ def run_slack_setup() -> None:
     print("  5. Pick the channel you want to post to")
     print("  6. Copy the webhook URL")
     print()
-    print("The URL looks like:")
-    print("  https://hooks.slack.com/services/T.../B.../...")
-    print()
     print("It will be stored securely in your OS keychain.")
     print()
 
@@ -111,7 +136,9 @@ def run_slack_setup() -> None:
             "https://hooks.slack.com/services/"
         )
         try:
-            confirm = input("Use it anyway? [Y/N]: ").strip().lower()
+            confirm = (
+                input("Use it anyway? [Y/N]: ").strip().lower()
+            )
         except (EOFError, KeyboardInterrupt):
             print("\nSetup cancelled.")
             return
@@ -125,7 +152,9 @@ def run_slack_setup() -> None:
     print()
     print("Testing webhook...", end=" ", flush=True)
     success = send_message(
-        "Executive in a Box connected successfully."
+        "Executive in a Box connected successfully.",
+        archetype_slug="operator",
+        archetype_name="The Operator",
     )
     if success:
         print("Message sent!")
@@ -147,39 +176,57 @@ def run_slack_command(args: list[str]) -> None:
         run_slack_setup()
         return
 
+    # Load config for archetype info
+    from exec_in_a_box.config import load_config
+
+    config = load_config()
+    slug = config.archetype_slug if config else None
+    name = config.archetype_name if config else None
+
     if args[0] == "--last":
-        # Read the most recent session and extract the position
         from exec_in_a_box import storage
 
         sessions = storage.list_sessions()
         if not sessions:
-            print("No sessions yet. Ask the CEO a question first.")
+            print(
+                "No sessions yet. "
+                "Ask the CEO a question first."
+            )
             sys.exit(1)
 
         content = sessions[0].read_text(encoding="utf-8")
 
-        # Extract the position line from the session
         lines = content.splitlines()
         position = None
-        for i, line in enumerate(lines):
+        for line in lines:
             if line.startswith("**Position:**"):
-                position = line.replace("**Position:**", "").strip()
+                position = line.replace(
+                    "**Position:**", ""
+                ).strip()
                 break
 
         if position is None:
             print(
-                "Couldn't find a recommendation in the "
-                "last session."
+                "Couldn't find a recommendation "
+                "in the last session."
             )
             sys.exit(1)
 
         print(f"Sending to Slack: {position[:80]}...")
-        if send_message(position):
+        if send_message(
+            position,
+            archetype_slug=slug,
+            archetype_name=name,
+        ):
             print("Sent!")
         return
 
     # Treat everything as the message
     message = " ".join(args)
     print(f"Sending to Slack: {message[:80]}...")
-    if send_message(message):
+    if send_message(
+        message,
+        archetype_slug=slug,
+        archetype_name=name,
+    ):
         print("Sent!")

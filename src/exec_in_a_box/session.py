@@ -84,12 +84,19 @@ def _display_reasoning(response: ValidatedResponse) -> None:
     print("---")
 
 
-def _get_decision(autonomy_level: int) -> str:
-    """Get the user's decision. Returns 'y', 'n', or 'm'."""
+def _get_decision(autonomy_level: int, has_slack: bool) -> str:
+    """Get the user's decision. Returns 'y', 'n', 'm', 'h', or 's'."""
+    slack_hint = " / [S]lack" if has_slack else ""
     if autonomy_level == 2:
-        prompt = "Adopt this recommendation? [Y]es / [N]o / [M]odify: "
+        prompt = (
+            "Adopt this recommendation? "
+            f"[Y]es / [N]o / [M]odify{slack_hint}: "
+        )
     else:
-        prompt = "Adopt this position? [Y]es / [N]o / [M]odify: "
+        prompt = (
+            "Adopt this position? "
+            f"[Y]es / [N]o / [M]odify{slack_hint}: "
+        )
 
     while True:
         raw = _input(prompt).strip().lower()
@@ -101,7 +108,56 @@ def _get_decision(autonomy_level: int) -> str:
             return "m"
         if raw in ("h", "how", "how did you get here", "reasoning"):
             return "h"
-        print("  Enter Y, N, M, or H (to see reasoning).")
+        if raw in ("s", "slack") and has_slack:
+            return "s"
+        options = "Y, N, M, H (reasoning)"
+        if has_slack:
+            options += ", S (Slack)"
+        print(f"  Enter {options}.")
+
+
+def _send_to_slack(response, config, archetype) -> None:
+    """Let user craft and send a message to Slack."""
+    from exec_in_a_box.slack import send_message
+
+    print()
+    print("  What would you like to send to Slack?")
+    print()
+    print("  1. The recommendation as-is")
+    print("  2. Write a custom message")
+    print("  3. Cancel")
+    print()
+
+    try:
+        choice = _input("  Pick [1-3]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Cancelled.")
+        return
+
+    if choice == "1":
+        message = response.position
+    elif choice == "2":
+        print()
+        print("  Type your message (the CEO's advice is")
+        print("  available for reference above):")
+        print()
+        message = _input("  Message: ").strip()
+        if not message:
+            print("  Empty message. Cancelled.")
+            return
+    else:
+        print("  Cancelled.")
+        return
+
+    print(f"  Sending to Slack...", end=" ", flush=True)
+    success = send_message(
+        message,
+        archetype_slug=config.archetype_slug,
+        archetype_name=archetype.name,
+    )
+    if success:
+        print("Sent!")
+    print()
 
 
 def _log_decision(
@@ -279,22 +335,36 @@ def run_session() -> None:
         # Display the response
         _display_response(result, effective_level)
 
+        # Check if Slack is configured
+        from exec_in_a_box.slack import get_webhook_url, send_message
+
+        has_slack = get_webhook_url() is not None
+
         # Decision loop
         while True:
-            decision = _get_decision(effective_level)
+            decision = _get_decision(effective_level, has_slack)
             if decision == "h":
                 _display_reasoning(result)
+                continue
+            if decision == "s":
+                _send_to_slack(result, config, archetype)
                 continue
             break
 
         modification = None
         if decision == "m":
-            modification = _input("  What would you change? ").strip()
+            modification = _input(
+                "  What would you change? "
+            ).strip()
 
         # Log and save
         _log_decision(question, result, decision, modification)
         _save_session(question, result, decision, modification)
 
-        decision_text = {"y": "Adopted", "n": "Rejected", "m": "Modified"}[decision]
+        decision_text = {
+            "y": "Adopted",
+            "n": "Rejected",
+            "m": "Modified",
+        }[decision]
         print(f"\n  Decision recorded: {decision_text}")
         print()
