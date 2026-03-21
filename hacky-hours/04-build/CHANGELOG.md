@@ -13,6 +13,20 @@
      ### Fixed
      - ... -->
 
+## [v0.2.0] — 2026-03-21
+
+### Added
+- Web content fetching: include URLs in questions and the CEO reads the page content as context
+- Slack webhook integration: post messages to Slack channels via `exec-in-a-box slack`
+- Configuration commands: `exec-in-a-box config show/archetype/provider/autonomy` for reconfiguring the CEO without re-running full setup
+- Slack setup guide (docs/SLACK_GUIDE.md)
+
+### Dependencies
+- Added beautifulsoup4 for HTML-to-text conversion
+- httpx was already a transitive dependency, now used directly for web fetching and Slack webhooks
+
+---
+
 ## [v0.1.0] — 2026-03-21
 
 ### Added

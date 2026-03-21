@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "executive-in-a-box"
-version = "0.1.0"
+version = "0.2.0"
 description = "AI-powered executive advisor — CEO-level strategic guidance without a human CEO."
 readme = "README.md"
 license = "MIT"
@@ -29,6 +29,8 @@ dependencies = [
     "anthropic>=0.40.0",
     "openai>=1.50.0",
     "keyring>=25.0.0",
+    "beautifulsoup4>=4.12.0",
+    "httpx>=0.25.0",
 ]
 
 [project.scripts]

@@ -25,9 +25,24 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("setup", help="Run the setup wizard")
     subparsers.add_parser("history", help="List recent sessions")
 
-    config_parser = subparsers.add_parser("config", help="View or change configuration")
-    config_subparsers = config_parser.add_subparsers(dest="config_command")
-    config_subparsers.add_parser("autonomy", help="View or change your autonomy level")
+    config_parser = subparsers.add_parser(
+        "config", help="View or change configuration"
+    )
+    config_subparsers = config_parser.add_subparsers(
+        dest="config_command"
+    )
+    config_subparsers.add_parser(
+        "autonomy", help="View or change your autonomy level"
+    )
+    config_subparsers.add_parser(
+        "archetype", help="Change your advisor archetype"
+    )
+    config_subparsers.add_parser(
+        "provider", help="Change your LLM provider"
+    )
+    config_subparsers.add_parser(
+        "show", help="Show current configuration"
+    )
 
     test_parser = subparsers.add_parser(
         "test-connection", help="Test your API key for a provider"
@@ -36,6 +51,21 @@ def build_parser() -> argparse.ArgumentParser:
         "provider",
         choices=["anthropic", "openai"],
         help="The provider to test",
+    )
+
+    slack_parser = subparsers.add_parser(
+        "slack",
+        help="Send a message to Slack via webhook",
+    )
+    slack_parser.add_argument(
+        "slack_args",
+        nargs="*",
+        default=[],
+        help=(
+            '"message" to send, '
+            "--last for last recommendation, "
+            "or setup to configure"
+        ),
     )
 
     return parser
@@ -107,6 +137,177 @@ def cmd_autonomy() -> None:
 
     save_autonomy_level(new_level)
     print(f"Autonomy level changed to {new_level}.")
+
+
+def cmd_config_show() -> None:
+    from exec_in_a_box.config import load_config
+    from exec_in_a_box.credentials import get_api_key
+    from exec_in_a_box.slack import get_webhook_url
+
+    config = load_config()
+    if config is None:
+        print("No configuration found. Run: exec-in-a-box setup")
+        sys.exit(1)
+
+    api_key = get_api_key(config.provider_name)
+    key_status = "configured" if api_key else "not set"
+    webhook = get_webhook_url()
+    slack_status = "configured" if webhook else "not set"
+
+    print()
+    print("Current configuration:")
+    print()
+    print(f"  Archetype:  {config.archetype_name}")
+    print(f"  Provider:   {config.provider_name}")
+    print(f"  API key:    {key_status}")
+    print(f"  Autonomy:   Level {config.autonomy_level}")
+    print(f"  Slack:      {slack_status}")
+    print()
+    print("Change with:")
+    print("  exec-in-a-box config archetype")
+    print("  exec-in-a-box config provider")
+    print("  exec-in-a-box config autonomy")
+    print("  exec-in-a-box slack setup")
+
+
+def cmd_config_archetype() -> None:
+    import re
+
+    from exec_in_a_box import storage
+    from exec_in_a_box.archetypes import list_archetypes
+    from exec_in_a_box.config import load_config
+
+    config = load_config()
+    if config is None:
+        print("No configuration found. Run: exec-in-a-box setup")
+        sys.exit(1)
+
+    archetypes = list_archetypes()
+    print()
+    print(f"Current archetype: {config.archetype_name}")
+    print()
+    for i, a in enumerate(archetypes, 1):
+        marker = (
+            " (current)" if a.slug == config.archetype_slug else ""
+        )
+        print(f"  {i}. {a.name} — {a.one_line}{marker}")
+    print()
+
+    raw = input(
+        f"Pick [1-{len(archetypes)}] "
+        "(or Enter to keep current): "
+    ).strip()
+    if not raw:
+        print("No change.")
+        return
+
+    try:
+        idx = int(raw) - 1
+        if not (0 <= idx < len(archetypes)):
+            raise ValueError()
+    except ValueError:
+        print(
+            "Please enter a number between "
+            f"1 and {len(archetypes)}."
+        )
+        return
+
+    chosen = archetypes[idx]
+    if chosen.slug == config.archetype_slug:
+        print("No change.")
+        return
+
+    text = storage.read_file("board/config.md")
+    text = re.sub(
+        r"^slug:.*$",
+        f"slug: {chosen.slug}",
+        text,
+        flags=re.MULTILINE,
+    )
+    text = re.sub(
+        r"^name:.*$",
+        f"name: {chosen.name}",
+        text,
+        flags=re.MULTILINE,
+    )
+    storage.write_file("board/config.md", text)
+    print(f"Archetype changed to {chosen.name}.")
+
+
+def cmd_config_provider() -> None:
+    import re
+
+    from exec_in_a_box import storage
+    from exec_in_a_box.config import load_config
+    from exec_in_a_box.credentials import store_api_key
+    from exec_in_a_box.providers import (
+        ProviderError,
+        create_provider,
+    )
+
+    config = load_config()
+    if config is None:
+        print("No configuration found. Run: exec-in-a-box setup")
+        sys.exit(1)
+
+    providers = ["anthropic", "openai"]
+    print()
+    print(f"Current provider: {config.provider_name}")
+    print()
+    for i, p in enumerate(providers, 1):
+        marker = " (current)" if p == config.provider_name else ""
+        print(f"  {i}. {p}{marker}")
+    print()
+
+    raw = input(
+        "Pick [1-2] (or Enter to keep current): "
+    ).strip()
+    if not raw:
+        print("No change.")
+        return
+
+    try:
+        idx = int(raw) - 1
+        if not (0 <= idx < len(providers)):
+            raise ValueError()
+    except ValueError:
+        print("Please enter 1 or 2.")
+        return
+
+    new_provider = providers[idx]
+
+    print()
+    print(f"Enter your API key for {new_provider}:")
+    api_key = input("API key: ").strip()
+    if not api_key:
+        print("No key entered. Cancelled.")
+        return
+
+    print(
+        f"Testing connection to {new_provider}...",
+        end=" ",
+        flush=True,
+    )
+    try:
+        provider = create_provider(new_provider, api_key=api_key)
+        provider.test_connection()
+        print("Connected.")
+    except ProviderError as e:
+        print("Failed.")
+        print(f"  {e.user_message}")
+        return
+
+    store_api_key(new_provider, api_key)
+
+    text = storage.read_file("board/config.md")
+    text = re.sub(
+        r"^provider:.*$",
+        f"provider: {new_provider}",
+        text,
+        flags=re.MULTILINE,
+    )
+    storage.write_file("board/config.md", text)
+    print(f"Provider changed to {new_provider}.")
 
 
 def cmd_test_connection(provider_name: str) -> None:
@@ -202,6 +403,12 @@ def main() -> None:
     if args.command == "config":
         if args.config_command == "autonomy":
             cmd_autonomy()
+        elif args.config_command == "archetype":
+            cmd_config_archetype()
+        elif args.config_command == "provider":
+            cmd_config_provider()
+        elif args.config_command == "show":
+            cmd_config_show()
         else:
             parser.parse_args(["config", "--help"])
         return
@@ -212,6 +419,12 @@ def main() -> None:
 
     if args.command == "history":
         cmd_history()
+        return
+
+    if args.command == "slack":
+        from exec_in_a_box.slack import run_slack_command
+
+        run_slack_command(args.slack_args)
         return
 
 

@@ -206,7 +206,10 @@ def run_session() -> None:
     print()
     print(f"Executive in a Box — {archetype.name}")
     print(f"Autonomy: Level {effective_level}")
-    print("Type your question, or 'quit' to exit.")
+    print(
+        "Type your question, or 'quit' to exit."
+        " Include URLs to give the CEO web context."
+    )
     print()
 
     while True:
@@ -216,6 +219,15 @@ def run_session() -> None:
         if question.lower() in ("quit", "exit", "q"):
             print("Session ended.")
             break
+
+        # Check for URLs and notify user
+        from exec_in_a_box.web import extract_urls
+
+        urls = extract_urls(question)
+        if urls:
+            print()
+            for url in urls:
+                print(f"  Fetching: {url}")
 
         # Build prompt (pre-call enforcement)
         system_prompt, user_message, secret_matches = build_prompt(archetype, question)

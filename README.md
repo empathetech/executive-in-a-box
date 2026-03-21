@@ -114,6 +114,32 @@ question.
 
 See the [Setup Guide](docs/SETUP_GUIDE.md) for a detailed walkthrough.
 
+### Configure your CEO
+
+```bash
+exec-in-a-box config show         # see current settings
+exec-in-a-box config archetype    # change your advisor
+exec-in-a-box config provider     # change LLM provider
+exec-in-a-box config autonomy     # change trust level
+```
+
+### Web context
+
+Include URLs in your questions and the CEO will read them:
+```
+> Should we adopt this pricing model? https://example.com/competitor-pricing
+```
+
+### Slack integration
+
+Post CEO recommendations to your team's Slack:
+```bash
+exec-in-a-box slack setup            # configure webhook
+exec-in-a-box slack "your message"   # send a message
+exec-in-a-box slack --last           # send last recommendation
+```
+See the [Slack Guide](docs/SLACK_GUIDE.md) for setup instructions.
+
 ## What does it NOT do?
 
 Let's be upfront:
