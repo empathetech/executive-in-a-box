@@ -176,57 +176,109 @@ def run_slack_command(args: list[str]) -> None:
         run_slack_setup()
         return
 
-    # Load config for archetype info
-    from exec_in_a_box.config import load_config
+    # Verify webhook is configured before going further
+    if get_webhook_url() is None:
+        print("No Slack webhook configured. Run: exec-in-a-box slack setup")
+        sys.exit(1)
 
-    config = load_config()
-    slug = config.archetype_slug if config else None
-    name = config.archetype_name if config else None
+    from exec_in_a_box.archetypes import list_archetypes
+    from exec_in_a_box import storage
 
-    if args[0] == "--last":
-        from exec_in_a_box import storage
+    try:
+        # ── Step 1: Pick archetype ────────────────────────────────────────
+        archetypes = list_archetypes()
+        print()
+        print("  Who's sending this?")
+        print()
+        for i, a in enumerate(archetypes, 1):
+            print(f"  {i}. {a.name} — {a.one_line}")
+        print()
+
+        raw = input(f"  Pick [1-{len(archetypes)}]: ").strip()
+        try:
+            idx = int(raw) - 1
+            if not (0 <= idx < len(archetypes)):
+                raise ValueError
+        except ValueError:
+            print("  Invalid choice. Cancelled.")
+            return
+        archetype = archetypes[idx]
+
+        # ── Step 2: Compose message ───────────────────────────────────────
+        print()
+        print("  What do you want to send?")
+        print()
+        print("  1. Write a message")
 
         sessions = storage.list_sessions()
-        if not sessions:
-            print(
-                "No sessions yet. "
-                "Ask the CEO a question first."
-            )
-            sys.exit(1)
+        has_last = bool(sessions)
+        if has_last:
+            print("  2. Use last session's recommendation")
+            print("  3. Cancel")
+        else:
+            print("  2. Cancel")
+        print()
 
-        content = sessions[0].read_text(encoding="utf-8")
+        choice = input("  Pick: ").strip()
 
-        lines = content.splitlines()
-        position = None
-        for line in lines:
-            if line.startswith("**Position:**"):
-                position = line.replace(
-                    "**Position:**", ""
-                ).strip()
-                break
+        if choice == "1":
+            print()
+            message = input("  Message: ").strip()
+            if not message:
+                print("  Empty message. Cancelled.")
+                return
+        elif choice == "2" and has_last:
+            content = sessions[0].read_text(encoding="utf-8")
+            message = None
+            for line in content.splitlines():
+                if line.startswith("**Position:**"):
+                    message = line.replace("**Position:**", "").strip()
+                    break
+            if not message:
+                print("  Couldn't find a recommendation in the last session. Cancelled.")
+                return
+        else:
+            print("  Cancelled.")
+            return
 
-        if position is None:
-            print(
-                "Couldn't find a recommendation "
-                "in the last session."
-            )
-            sys.exit(1)
+        # ── Step 3: Preview ───────────────────────────────────────────────
+        print()
+        print(f"  ─── Preview ({archetype.name}) ───")
+        print(f"  {message}")
+        print("  " + "─" * (len(archetype.name) + 16))
+        print()
 
-        print(f"Sending to Slack: {position[:80]}...")
-        if send_message(
-            position,
-            archetype_slug=slug,
-            archetype_name=name,
-        ):
+        confirm = input("  Send to Slack? [Y]es / [E]dit / [C]ancel: ").strip().lower()
+
+        if confirm in ("e", "edit"):
+            print()
+            message = input("  Corrected message: ").strip()
+            if not message:
+                print("  Empty message. Cancelled.")
+                return
+            print()
+            print(f"  ─── Preview ({archetype.name}) ───")
+            print(f"  {message}")
+            print("  " + "─" * (len(archetype.name) + 16))
+            print()
+            confirm = input("  Send to Slack? [Y/N]: ").strip().lower()
+
+        if confirm not in ("y", "yes"):
+            print("  Cancelled.")
+            return
+
+        # ── Step 4: Send ──────────────────────────────────────────────────
+        print()
+        print("  Sending...", end=" ", flush=True)
+        success = send_message(
+            message,
+            archetype_slug=archetype.slug,
+            archetype_name=archetype.name,
+        )
+        if success:
             print("Sent!")
-        return
+        print()
 
-    # Treat everything as the message
-    message = " ".join(args)
-    print(f"Sending to Slack: {message[:80]}...")
-    if send_message(
-        message,
-        archetype_slug=slug,
-        archetype_name=name,
-    ):
-        print("Sent!")
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Cancelled.")
+        return

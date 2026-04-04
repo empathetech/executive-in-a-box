@@ -35,6 +35,7 @@ def get_config():
             "slug": a.slug,
             "name": a.name,
             "one_line": a.one_line,
+            "traits": a.traits,
         }
         for a in list_archetypes()
     ]

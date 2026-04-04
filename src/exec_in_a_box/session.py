@@ -149,6 +149,7 @@ def _send_to_slack(response: ValidatedResponse, config, archetype) -> None:
 def _log_decision(
     question: str,
     response: ValidatedResponse,
+    archetype_name: str,
     decision: str,
     modification: Optional[str],
 ) -> None:
@@ -159,7 +160,7 @@ def _log_decision(
     entry = (
         f"\n## {timestamp}\n\n"
         f"**Question:** {question}\n\n"
-        f"**Advisor:** {response.archetype} (confidence: {response.confidence})\n\n"
+        f"**Advisor:** {archetype_name} (confidence: {response.confidence})\n\n"
         f"**Position:** {response.position}\n\n"
         f"**Decision:** {decision_text}\n"
     )
@@ -172,8 +173,10 @@ def _log_decision(
 def _save_session(
     question: str,
     response: ValidatedResponse,
+    archetype_name: str,
     decision: str,
     modification: Optional[str],
+    archetype_slug: str = "",
 ) -> None:
     """Save the full session transcript."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -182,7 +185,8 @@ def _save_session(
     content = (
         f"# Session — {timestamp}\n\n"
         f"## Question\n{question}\n\n"
-        f"## {response.archetype}'s Response\n\n"
+        f"## {archetype_name}'s Response\n\n"
+        f"**Archetype:** {archetype_slug}\n"
         f"**Position:** {response.position}\n\n"
         f"**Reasoning:** {response.reasoning}\n\n"
         f"**Confidence:** {response.confidence}\n"
@@ -209,6 +213,17 @@ def _save_session(
         content += f"\n**Modification:** {modification}\n"
 
     storage.write_file(str(path.relative_to(storage.get_data_dir())), content)
+
+    storage.append_session_index({
+        "id": path.stem,
+        "slug": archetype_slug,
+        "timestamp": timestamp,
+        "decision": decision_text,
+        "question": question[:120],
+        "position": response.position[:200],
+        "confidence": response.confidence,
+        "ambition_level": response.ambition_level,
+    })
 
 
 def _switch_ceo_interactive() -> Optional[str]:
@@ -505,11 +520,12 @@ def run_session(initial_slug: Optional[str] = None) -> None:
                 colorize("  What would you change? ", C.CYAN)
             ).strip()
 
-        _log_decision(question, result, decision, modification)
-        _save_session(question, result, decision, modification)
+        _log_decision(question, result, archetype.name, decision, modification)
+        _save_session(question, result, archetype.name, decision, modification, archetype.slug)
 
         decision_text = {"y": "Adopted", "n": "Rejected", "m": "Modified"}[decision]
+        detail = f' — "{modification}"' if decision == "m" and modification else ""
         print(
-            colorize(f"\n  Decision recorded: ", C.DIM)
-            + colorize(decision_text, C.LIME)
+            colorize(f"\n  {decision_text}{detail}", C.LIME)
+            + colorize(" · logged to decisions.md · informs future sessions", C.DIM)
         )

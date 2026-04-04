@@ -9,6 +9,7 @@ export interface ArchetypeInfo {
   slug: string
   name: string
   one_line: string
+  traits: Record<string, number>  // personality trait scores, 0.0–1.0
 }
 
 export interface ConfigResponse {
@@ -83,4 +84,38 @@ export interface ArtifactDetail extends ArtifactMeta {
 export interface AnnounceRequest {
   message: string
   archetype_slug?: string
+}
+
+// ---- Stats ----
+
+export interface DecisionRecord {
+  timestamp: string
+  archetype: string
+  question: string
+  position: string
+  decision: 'Adopted' | 'Rejected' | 'Modified'
+  modification: string
+  confidence: 'low' | 'medium' | 'high'
+  ambition_level: string
+}
+
+export interface CeoStats {
+  slug: string
+  name: string
+  total: number
+  adopted: number
+  rejected: number
+  modified: number
+  agreement_rate: number
+  modification_rate: number
+  rejection_rate: number
+  avg_confidence: number
+  avg_ambition: number
+  usage_share: number
+  recent_decisions: DecisionRecord[]
+}
+
+export interface StatsResponse {
+  ceos: CeoStats[]
+  total_sessions: number
 }

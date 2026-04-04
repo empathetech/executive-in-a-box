@@ -12,6 +12,7 @@ import type {
   Job,
   MessageRequest,
   SessionResponse,
+  StatsResponse,
 } from '../types/api'
 
 const BASE = '/api'
@@ -101,6 +102,10 @@ export const createArtifact = (body: {
     method: 'POST',
     body: JSON.stringify(body),
   })
+
+// ---- Stats ----
+
+export const getStats = () => request<StatsResponse>('/stats')
 
 // ---- Slack ----
 

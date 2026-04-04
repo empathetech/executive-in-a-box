@@ -23,6 +23,7 @@ from exec_in_a_box.server.routes import (
     jobs,
     session,
     slack,
+    stats,
     stream,
 )
 
@@ -40,6 +41,7 @@ app.include_router(jobs.router)
 app.include_router(stream.router)
 app.include_router(artifacts.router)
 app.include_router(slack.router)
+app.include_router(stats.router)
 
 
 def _find_web_dist() -> Path | None:

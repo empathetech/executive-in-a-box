@@ -115,8 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser(
-        "usage",
-        help="Show token usage and job history",
+        "stats",
+        help="Show CEO personality profiles and decision history",
     )
 
     all_hands_parser = subparsers.add_parser(
@@ -558,43 +558,128 @@ def cmd_artifacts_open(artifact_id: str) -> None:
     print(path.read_text(encoding="utf-8"))
 
 
-def cmd_usage() -> None:
-    from exec_in_a_box import storage
+def cmd_stats() -> None:
+    from exec_in_a_box.archetypes import TRAIT_LABELS, list_archetypes
     from exec_in_a_box.cli_display import C, colorize, divider
     from exec_in_a_box.jobs import list_jobs
+    from exec_in_a_box.stats import get_ceo_stats
 
+    archetypes = list_archetypes()
+    ceo_stats, total_sessions = get_ceo_stats()
     jobs = list_jobs()
+
+    # Index session stats by slug for easy lookup
+    stats_by_slug = {s["slug"]: s for s in ceo_stats}
+
     print()
-    print(colorize("  Usage Summary", C.BOLD, C.CYAN))
+    print(colorize("  Stats", C.BOLD, C.CYAN))
     print(divider())
 
-    if not jobs:
-        print(colorize("  No jobs run yet.", C.DIM))
-    else:
-        status_counts: dict[str, int] = {}
-        for j in jobs:
-            status_counts[j["status"]] = status_counts.get(j["status"], 0) + 1
+    BAR_W = 20
+    CEO_COLORS = {
+        "operator":  C.CYAN,
+        "visionary": C.MAGENTA,
+        "advocate":  C.LIME,
+        "analyst":   C.YELLOW,
+    }
 
-        print()
-        print(colorize("  Executize Jobs", C.BOLD))
-        print()
-        for status, count in status_counts.items():
-            color = {
-                "complete": C.LIME,
-                "failed": C.MAGENTA,
-                "running": C.CYAN,
-                "queued": C.YELLOW,
-            }.get(status, C.DIM)
-            print(
-                colorize(f"    {status:<12}", color)
-                + colorize(str(count), C.BOLD, C.WHITE)
-            )
-        print()
-        print(colorize(f"  Total jobs: {len(jobs)}", C.DIM))
-
-    sessions = storage.list_sessions()
+    # ── General usage ───────────────────────────────────────────────────────
     print()
-    print(colorize(f"  Sessions recorded: {len(sessions)}", C.DIM))
+    print(colorize("  General Usage", C.BOLD))
+    print()
+
+    if total_sessions == 0:
+        print(colorize("  No sessions yet.", C.DIM))
+    else:
+        print(colorize(f"  Total sessions: {total_sessions}", C.DIM))
+        print()
+        # Usage share bar per CEO
+        for arch in archetypes:
+            s = stats_by_slug.get(arch.slug, {})
+            total = s.get("total", 0)
+            share = total / total_sessions if total_sessions else 0
+            filled = round(share * BAR_W)
+            bar = "█" * filled + "░" * (BAR_W - filled)
+            pct = f"{round(share * 100):>3}%"
+            color = CEO_COLORS.get(arch.slug, C.WHITE)
+            short = arch.name.replace("The ", "")
+            print(
+                colorize(f"    {short:<10}", color)
+                + colorize(bar, color)
+                + colorize(f" {pct}  ({total} sessions)", C.DIM)
+            )
+
+    if jobs:
+        total_jobs = len(jobs)
+        complete = sum(1 for j in jobs if j["status"] == "complete")
+        failed = sum(1 for j in jobs if j["status"] == "failed")
+        print()
+        print(
+            colorize(f"  Executize jobs: {total_jobs}", C.DIM)
+            + colorize(f"  ✓ {complete}", C.LIME)
+            + (colorize(f"  ✗ {failed}", C.MAGENTA) if failed else "")
+        )
+
+    # ── Per-CEO blocks ──────────────────────────────────────────────────────
+    print()
+    print(colorize("  CEO Profiles", C.BOLD))
+
+    for arch in archetypes:
+        color = CEO_COLORS.get(arch.slug, C.WHITE)
+        s = stats_by_slug.get(arch.slug, {})
+        total = s.get("total", 0)
+
+        print()
+        print(colorize(f"  {arch.name}", C.BOLD, color))
+        print(colorize(f"  {arch.one_line}", C.DIM))
+        print()
+
+        # Personality traits
+        for trait in TRAIT_LABELS:
+            score = arch.traits.get(trait, 0.0)
+            filled = round(score * BAR_W)
+            bar = "█" * filled + "░" * (BAR_W - filled)
+            pct = f"{round(score * 100):>3}%"
+            print(
+                colorize(f"    {trait:<22}", C.DIM)
+                + colorize(bar, color)
+                + colorize(f" {pct}", C.DIM)
+            )
+
+        # Decision history (only if sessions exist for this CEO)
+        if total > 0:
+            adopted  = s.get("adopted", 0)
+            modified = s.get("modified", 0)
+            rejected = s.get("rejected", 0)
+            agr_pct  = f"{s.get('agreement_rate', 0) * 100:.0f}%"
+            print()
+            print(
+                colorize(f"    {total} sessions · ", C.DIM)
+                + colorize(f"✓ {adopted} adopted", C.LIME)
+                + colorize(f"  ~ {modified} modified", C.YELLOW)
+                + colorize(f"  ✗ {rejected} rejected", C.MAGENTA)
+                + colorize(f"  ({agr_pct} agreement)", C.DIM)
+            )
+            recent = s.get("recent_decisions", [])
+            if recent:
+                print()
+                for rec in recent[:3]:
+                    icon = {"Adopted": "✓", "Rejected": "✗", "Modified": "~"}.get(
+                        rec["decision"], "?"
+                    )
+                    icon_color = {
+                        "Adopted": C.LIME,
+                        "Rejected": C.MAGENTA,
+                        "Modified": C.YELLOW,
+                    }.get(rec["decision"], C.DIM)
+                    print(
+                        colorize(f"    {icon} ", icon_color)
+                        + colorize(rec["question"][:55], C.DIM)
+                    )
+        else:
+            print()
+            print(colorize("    No sessions yet.", C.DIM))
+
     print()
 
 
@@ -732,8 +817,8 @@ def main() -> None:
             parser.parse_args(["artifacts", "--help"])
         return
 
-    if args.command == "usage":
-        cmd_usage()
+    if args.command == "stats":
+        cmd_stats()
         return
 
     if args.command == "all-hands":

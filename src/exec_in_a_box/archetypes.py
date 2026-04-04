@@ -38,6 +38,18 @@ CONSTRAINTS (non-negotiable):
 - If you are uncertain, say so. Do not fabricate confidence or specificity."""
 
 
+# Personality trait dimensions used for radar chart comparisons.
+# All values are normalized 0.0–1.0.
+TRAIT_LABELS: list[str] = [
+    "Risk Appetite",    # bold/risky vs. cautious/safe recommendations
+    "People Focus",     # human/equity lens vs. operational/metric lens
+    "Long-term Horizon",# 2+ year vision vs. immediate execution
+    "Innovation Drive", # disrupt/reframe vs. optimize existing
+    "Data Reliance",    # evidence/quantification vs. intuition/values
+    "Decisiveness",     # commits clearly vs. hedges or requests more info
+]
+
+
 @dataclass
 class Archetype:
     """An archetype defines a reasoning style for the AI advisor."""
@@ -47,6 +59,8 @@ class Archetype:
     one_line: str
     role_definition: str
     reasoning_style: str
+    # Personality trait scores (0.0–1.0), keyed by TRAIT_LABELS entries.
+    traits: dict[str, float]
 
     def build_system_prompt(self, org_context: str) -> str:
         """Assemble the full system prompt for this archetype.
@@ -90,6 +104,14 @@ OPERATOR = Archetype(
         "something real in front of users fastest with the least risk of stalling "
         "or overcommitting. Break big plans into concrete next steps."
     ),
+    traits={
+        "Risk Appetite":     0.25,  # risk-aware, prefers safe bets
+        "People Focus":      0.40,  # cares about capacity, not equity-first
+        "Long-term Horizon": 0.30,  # execution-now over 2-year vision
+        "Innovation Drive":  0.25,  # favors simplest path, not disruption
+        "Data Reliance":     0.55,  # operational data: timelines, cost, capacity
+        "Decisiveness":      0.85,  # breaks plans into concrete next steps
+    },
 )
 
 VISIONARY = Archetype(
@@ -109,6 +131,14 @@ VISIONARY = Archetype(
         "option have similar downside risk, favor the bold one. But always show "
         "your reasoning so the user can evaluate the risk themselves."
     ),
+    traits={
+        "Risk Appetite":     0.85,  # comfortable with calculated risk
+        "People Focus":      0.25,  # opportunity-first, not people-first
+        "Long-term Horizon": 0.90,  # 2-year horizon, works backward from future
+        "Innovation Drive":  0.90,  # challenges incrementalism, reframes questions
+        "Data Reliance":     0.30,  # vision and intuition over evidence
+        "Decisiveness":      0.75,  # bold commitments, but shows reasoning
+    },
 )
 
 ADVOCATE = Archetype(
@@ -130,6 +160,14 @@ ADVOCATE = Archetype(
         "— don't hide it behind business language. If a recommendation contradicts "
         "the org's stated values, say so clearly."
     ),
+    traits={
+        "Risk Appetite":     0.35,  # cautious about harm, not about change
+        "People Focus":      0.95,  # the defining trait: people always come first
+        "Long-term Horizon": 0.60,  # sustainable over short-term gains
+        "Innovation Drive":  0.45,  # open to change if it serves people
+        "Data Reliance":     0.25,  # values and lived experience over metrics
+        "Decisiveness":      0.55,  # will say no clearly, but deliberates on tradeoffs
+    },
 )
 
 ANALYST = Archetype(
@@ -149,6 +187,14 @@ ANALYST = Archetype(
         "time, cost, likelihood. Be explicit about what you're estimating vs. what "
         "you know. If the user is about to make a big bet on thin evidence, say so."
     ),
+    traits={
+        "Risk Appetite":     0.20,  # "cheap experiments over expensive commitments"
+        "People Focus":      0.30,  # evidence-first, not people-first
+        "Long-term Horizon": 0.45,  # depends on data, neither short nor long by default
+        "Innovation Drive":  0.30,  # validates before disrupting
+        "Data Reliance":     0.95,  # the defining trait: evidence over everything
+        "Decisiveness":      0.35,  # will say "we don't know enough" explicitly
+    },
 )
 
 # All built-in archetypes, indexed by slug
