@@ -32,7 +32,26 @@ The tool captures what's genuinely valuable about a CEO (strategic clarity, exte
 
 ## Where
 
-Local-first CLI and/or desktop application. The tool runs on the user's machine by default. Cloud integration is a future option, introduced incrementally with clear documentation and opt-in consent at each step.
+*Pivoted 2026-04-04 — see [ADR](../02-design/decisions/2026-04-04-web-ui-pivot.md) for context.*
+
+Three first-class interfaces, all with feature parity on the core experience:
+
+1. **Web app (primary)** — locally-served Python web server, accessed via browser at
+   `localhost`. Can be exposed over Tailscale for small-team access without cloud
+   infrastructure. Design language: neon/8-bit, 80s-90s spandex color register,
+   CRT panel treatments.
+
+2. **CLI** — maintained as a full-feature interface with an ASCII/Unicode design
+   language tonally consistent with the web app. Not a fallback — same conversational
+   model, same async job system, same multi-CEO switching.
+
+3. **Claude skill** — a `/exec-in-a-box` slash command for use inside Claude Code.
+   Markdown formatting conventions consistent with the design language. Full feature
+   parity with the other interfaces.
+
+All interfaces connect to the same Python backend. The backend owns async job state,
+CEO context, and all persistence. Cloud hosting with an auth layer is a future milestone,
+introduced with full documentation and opt-in consent at each step.
 
 ## When
 

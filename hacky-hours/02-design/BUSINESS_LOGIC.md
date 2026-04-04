@@ -339,6 +339,88 @@ judgment, especially for significant or irreversible decisions."
 
 ---
 
+## Async Job Rules
+
+*Added 2026-04-04 — see [ADR](decisions/2026-04-04-web-ui-pivot.md) for context.*
+
+"Deep work" queries are dispatched as background jobs rather than blocking calls.
+**The job system is a backend responsibility — not the interface layer.**
+
+### What triggers a job
+
+A query goes through the job system when:
+1. The user explicitly clicks/invokes the "Executize" control, OR
+2. The backend estimates the query will take longer than a configurable threshold
+   (default: 10 seconds — adjustable in config)
+
+Normal conversational queries stream directly and do not create a job.
+
+### Job lifecycle
+
+```
+queued → running → complete
+                 → failed
+```
+
+| State | What it means | Interface behavior |
+|-------|---------------|-------------------|
+| `queued` | Job received, not yet started | CEO enters Executizing state |
+| `running` | LLM call in progress | CEO remains in Executizing state |
+| `complete` | Result ready | Interface notified; CEO returns to active state |
+| `failed` | Error during execution | Interface notified with plain-language error |
+
+### Rules
+
+- A CEO can have at most one active job at a time. If a new Executize is requested
+  while a job is running, the interface must inform the user and not dispatch a second job.
+- All other CEOs remain fully interactive while a job runs.
+- Job results are persisted to `jobs/<job-id>.json` and to the session transcript.
+- If the user closes the interface while a job is running, the job continues in the
+  backend. On reconnect, the interface checks for completed jobs and notifies the user.
+- Failed jobs are retried once automatically. If the second attempt fails, the user
+  is notified and can retry manually.
+
+### Job error messages
+
+| Error type | User sees |
+|------------|-----------|
+| Job failed (LLM error) | "The [Archetype] ran into a problem. Try again or rephrase your question." |
+| Job timed out | "The [Archetype] took too long and timed out. Try a more focused question." |
+| All retries failed | "The [Archetype] couldn't complete this one. Try again later." |
+
+---
+
+## Slack Announce Flow
+
+*Added 2026-04-04.*
+
+The Announce flow lets users compose a Slack message with a live preview before sending.
+This is the primary way to share CEO recommendations with a team Slack channel.
+
+### Rules
+
+1. The compose step is always manual — the CEO never auto-sends to Slack without the
+   user initiating the Announce flow.
+2. The preview must render Slack block elements (mrkdwn formatting, section blocks)
+   before the user can send. The user must see exactly what will post.
+3. A confirmation step ("Post to #channel-name?") is required before the webhook call.
+4. The webhook call is logged to the session transcript with the message content and
+   timestamp.
+5. If the webhook call fails, the user sees: "Couldn't reach Slack. Check your webhook
+   URL in settings." The message is not silently dropped — the user can retry.
+6. Slack webhook URL is stored in local config (not keychain). It is a send-only URL,
+   not a credential.
+
+### What can be announced
+
+- Any CEO response from the current session
+- A manually composed message
+- A summary composed by the CEO on request ("Summarize this session for Slack")
+
+The user always reviews the final content before it sends.
+
+---
+
 ## Error Handling Contract
 
 All errors must be handled at the wrapper layer. The user sees plain-language
@@ -352,6 +434,9 @@ descriptions. Internal state is never exposed.
 | Secret detected in context | "We found what looks like a secret in [file]. We've blocked that content from being sent." | Log redaction, halt call until acknowledged |
 | Config file missing or corrupt | "Your configuration file appears to be missing or damaged. Run: exec setup" | Do not attempt auto-repair |
 | File permission error | "We couldn't read/write [file]. Check that the file isn't open elsewhere." | Log error |
+| Async job failed | "The [Archetype] ran into a problem. Try again or rephrase your question." | Log full error; set job state to failed |
+| Slack webhook call fails | "Couldn't reach Slack. Check your webhook URL in settings." | Log attempt; do not retry silently |
+| Streaming interrupted | "The connection dropped mid-response. Here's what we got: [partial]" | Save partial to session transcript; offer retry |
 
 Error messages must:
 - Say what happened in plain language

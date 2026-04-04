@@ -4,284 +4,443 @@
      These journeys define what the tool must do, in what order, and what
      the user sees at each step. Implementation must match these flows.
      When a journey changes, update this doc and write an ADR if the change
-     is significant. -->
+     is significant.
+
+     Rewritten 2026-04-04 for web app + CLI + Claude skill three-interface model.
+     See decisions/2026-04-04-web-ui-pivot.md. Prior CLI-only journeys archived. -->
 
 ---
 
-## Journey 1: First Launch (Setup Wizard)
+## Journey 1: First Launch (Setup / Onboarding)
 
-The setup wizard runs once on first launch. It establishes the org profile,
-configures the board, and sets the autonomy level. It must be completable by
-a non-technical user in under 15 minutes.
+Runs once on first launch. Establishes the org profile, configures the board,
+and sets the autonomy level. Must be completable by a non-technical user in
+under 15 minutes across all three interfaces.
+
+### Web App
 
 ```
-[Launch tool for the first time]
+[Navigate to localhost:PORT for the first time]
         |
         v
-[Welcome screen]
-  "Executive in a Box helps you run your org with AI-powered strategic guidance.
-   You're always in charge. Let's get you set up."
+[Full-screen onboarding wizard — styled in the product aesthetic]
+  Step 1: Welcome
+    "Executive in a Box. Let's set up your board."
+    Brief explanation of what the tool is. No jargon.
         |
         v
-[Step 1: Your Org]
-  - What's your org's name?
-  - In one or two sentences, what does it do?
-  - What are the most important values your org operates by?
-  (Plain text inputs. Saved to org/profile.md)
+  Step 2: Your Org
+    - Org name
+    - What does it do? (1-2 sentences)
+    - What are the most important values it operates by?
+    Saved to org/profile.md
         |
         v
-[Step 2: Your Board]
-  - Do you want one advisor (simple) or a board of advisors (multiple perspectives)?
-  - [If board] Pick archetypes from the list. Each one explains what it brings.
-  - For each archetype: which LLM provider should power it? (List available providers)
-  - [Provider setup] Enter your API key for each provider. (Stored locally, never transmitted)
-  (Saved to board/config.md)
+  Step 3: Your Board
+    - Board size: one advisor or multiple?
+    - Pick archetypes from illustrated cards (portrait + plain-language description)
+    - For each archetype: pick LLM provider
+    - Enter API key per provider (masked input, stored in OS keychain)
+    - Test call made to validate each key before proceeding
         |
         v
-[Step 3: How much should your CEO do on its own?]
-  - Present the four autonomy levels in plain language with examples:
-    Level 1: "I'll always ask you before doing anything. You're fully in control."
-    Level 2: "I'll give you a recommendation and you approve or change it."
-    Level 3: "I'll handle routine decisions myself and flag the big ones."
-    Level 4: "I'll act on my conclusions. You review what I did."
-  - Recommend Level 1 for first-time users. Explain why.
-  - User picks a level.
-  (Saved to board/config.md)
+  Step 4: Autonomy Level
+    - Four levels shown as illustrated cards with plain-language examples
+    - Recommend Level 1 for new users, explain why
+    - User picks a level
+    - If Level 3 or 4: explicit acknowledgment modal required
         |
         v
-[Step 4: Quick orientation]
-  - Show the user what their board looks like (names, archetypes, providers)
-  - Show their autonomy level
-  - Explain: "You can change any of this at any time by running: exec setup"
-  - Offer to run a demo board session on a sample question
-        |
-        v
-[Setup complete. Drop into main prompt.]
+  Step 5: Review & Launch
+    - Show board composition: portrait strip with archetype name and provider
+    - Show autonomy level with description
+    - "You can change any of this in Settings at any time."
+    - [Launch] → main three-pane interface
 ```
 
-**Guardrails:**
-- Setup cannot be skipped. The tool will not proceed without a minimum valid config
-  (org name + at least one archetype + one provider configured)
-- API keys are validated by making a test call before setup completes. If the call
-  fails, the user is told in plain language and setup does not proceed
-- No LLM call is made until the user has reviewed and confirmed their board config
+### CLI
+
+```
+[Run exec-in-a-box for the first time]
+        |
+        v
+[ASCII welcome banner — design per STYLE_GUIDE.md]
+  Wizard prompts run sequentially in the terminal.
+  Same steps as web app, adapted for text input.
+  Provider API keys entered with masked echo.
+  Test call validates each key before proceeding.
+  Setup complete → drop into main chat prompt.
+```
+
+### Claude Skill
+
+```
+[Run /exec-in-a-box for the first time]
+        |
+        v
+[Skill detects no config exists]
+  Prints setup instructions — directs user to run the CLI or web app
+  setup wizard first. The skill does not run its own setup wizard;
+  it reads the config written by the other interfaces.
+```
+
+**Guardrails (all interfaces):**
+- Cannot proceed without minimum valid config (org name + at least one archetype + one provider)
+- API keys validated by test call before setup completes
+- No LLM call made until board config is confirmed by user
+- Level 3/4 always require explicit acknowledgment, cannot be skipped
 
 ---
 
 ## Journey 2: A Board Session (Core Loop)
 
-The primary interaction. User asks a strategic question; the board deliberates;
-user decides.
+The primary interaction. User asks a strategic question; the board responds;
+user decides. This is a **conversational** loop — follow-up questions are natural
+and expected. Session history persists within the interface.
+
+### Web App
 
 ```
-[User submits a question or topic]
-  e.g. "Should we hire a contractor to build the payments feature or do it ourselves?"
+[User types a question in the chat input for the active CEO]
+  e.g. "Should we hire a contractor for payments or build it ourselves?"
         |
         v
-[Pre-flight checks — our code, not the LLM]
-  - Is the question within scope? (Not a request for illegal/harmful action)
-  - Does the context include any secrets? (Scan before sending)
-  - Which archetypes are active? Load their system prompts.
-  - What context is relevant? Load org profile + strategic memory + recent decisions
-  - Log the query to the session file
+[Wrapper pre-flight (our code, not the LLM)]
+  - Scan context for secrets
+  - Load archetype system prompt + org context + relevant memory
+  - Log query to session transcript
         |
         v
-[Each archetype responds independently]
-  - Archetype system prompt + org context + user question → LLM API call
-  - Responses are collected in parallel (or sequentially if provider rate limits apply)
-  - Each response is validated against the output schema before use (see BUSINESS_LOGIC.md)
+[Streaming response]
+  - Response streams to the chat window in typewriter style
+  - CEO portrait shows active/thinking state during streaming
+  - User can switch to another CEO's chat tab while this streams
         |
         v
-[Board Engine aggregates responses]
-  - Identifies common ground across all positions
-  - Maps each position on the ambition/caution spectrum
-  - Extracts and deduplicates pros and cons
-  - Synthesizes a CEO conclusion
-  - Builds the "how it got here" reasoning chain
+[Response rendered in chat]
+  - CEO's position, reasoning, confidence, pros/cons, flags shown
+  - Collapsible "How it got here" section
+  - Schema validation has already run — only valid output is shown
         |
         v
-[Present results to user]
-  Default view:
-    - CEO conclusion (the synthesized recommendation)
-    - Common ground (what everyone agreed on)
-    - Spectrum summary (who leaned which way and how far)
-    - Aggregated pros and cons
-
-  On request:
-    - Each board member's full position
-    - "How it got here" reasoning chain
-
-        |
-        v
-[User decision — based on autonomy level]
-  Level 1/2: "Do you want to adopt this recommendation? [Y/N/Modify]"
-  Level 3/4: Conclusion is acted on automatically (if within configured scope)
-             User can review at any time via session log
+[User decision — per autonomy level]
+  Level 1/2: Y/N/Modify action shown below the response
+  Level 3/4: auto-acted if within configured scope; logged for async review
         |
         v
 [Record outcome]
-  - Log the decision and outcome to org/decisions.md
-  - Update strategic memory if relevant
-  - Offer to add follow-up tasks to the backlog
+  - Decision logged to org/decisions.md
+  - Strategic memory updated if relevant
+  - Follow-up question or next topic continues the conversation naturally
 ```
 
-**Guardrails:**
-- The aggregation step is done by our code, not a second LLM call — it operates on
-  structured output from each archetype, not free text (see BUSINESS_LOGIC.md)
-- The user's final yes/no is always recorded, even at Level 4 (async review)
-- If any archetype response fails validation, it is flagged as invalid and excluded
-  from aggregation — the session continues with remaining valid responses
-- The session is never committed to disk until the user's decision is recorded
+### Deep Work (Executize path)
+
+```
+[User clicks "Executize" or backend estimates long duration]
+        |
+        v
+[Job dispatched to backend job system]
+  - CEO portrait enters Executizing state (faded, archetype verb displayed)
+  - Chat input for that CEO is disabled
+  - Toast: "[Archetype] is [verb]. You can still chat with other CEOs."
+        |
+        v
+[User continues chatting with other CEO tabs — fully interactive]
+        |
+        v
+[Job completes]
+  - Toast notification: "The [Archetype] is back." + action to view response
+  - CEO portrait returns to active state
+  - Response delivered to that CEO's chat window
+```
+
+### CLI
+
+```
+[User types a question at the prompt]
+  Active CEO shown in prompt prefix: [OPERATOR] >
+        |
+        v
+[Streaming output to terminal — typewriter style via progressive print]
+        |
+        v
+[Response printed with ASCII structure per STYLE_GUIDE.md]
+  Position / reasoning / confidence / pros / cons / flags
+        |
+        v
+[Y/N/Modify prompt per autonomy level]
+        |
+        v
+[For deep work: "exec --executize 'question'" dispatches a background job]
+  Status line shows Executizing state.
+  Other CEO prompts remain available via --ceo flag.
+  Completion notification printed when job finishes.
+```
+
+### Claude Skill
+
+```
+[User runs /exec-in-a-box "question"]
+        |
+        v
+[Skill submits to backend, streams response as markdown output]
+        |
+        v
+[For deep work: skill returns immediately with job ID]
+  "🌀 [VISIONARY] Envisioning... (job abc123). Ask other CEOs or check back."
+  User runs /exec-in-a-box status abc123 or asks another CEO.
+  Skill notifies when job is complete on next invocation.
+```
+
+**Guardrails (all interfaces):**
+- Aggregation is done in code, not a second LLM call
+- Invalid archetype responses are excluded; session continues with valid ones
+- User's final decision is always recorded, even at Level 4
+- Streaming interruptions save partial output to transcript and offer retry
 
 ---
 
-## Journey 3: All-Hands Meeting
+## Journey 3: Switching Between CEOs
 
-The tool plans and facilitates a meeting about product direction with the user
-and any other participants.
+Users can maintain separate ongoing conversations with each CEO archetype.
+Each conversation has its own persistent history.
+
+### Web App
 
 ```
-[User requests an all-hands]
-  "Let's do an all-hands on Q2 priorities"
+[CEO portrait strip visible above chat area]
+  Each portrait: name, archetype, autonomy level toggle, Executizing state if active
         |
         v
-[Tool gathers context]
-  - Reads current roadmap and backlog
-  - Reads recent decisions log
-  - Asks user: who is attending? What topics must be covered?
-        |
-        v
-[Tool generates a meeting agenda]
-  - Agenda is presented to user for review and edit before anything happens
-  - User approves or modifies
-        |
-        v
-[Meeting facilitation mode]
-  - Tool presents each agenda item in sequence
-  - For each item: surfaces relevant context, asks for input from user (and others if present)
-  - Board can be invoked for any item that needs strategic input
-  - Tool tracks what was decided for each item in real time
-        |
-        v
-[Post-meeting summary]
-  - Tool drafts a written summary of what was covered and what was decided
-  - User reviews and approves before it is saved
-  - Approved summary saved to sessions/ and relevant decisions added to org/decisions.md
-  - Action items offered for addition to backlog
+[User clicks a portrait to switch active CEO]
+  Chat history for that CEO loads in the center pane.
+  Input bar activates for the selected CEO.
+  Other CEOs' conversations are preserved exactly.
 ```
 
-**Guardrails:**
-- The agenda is always user-approved before facilitation begins
-- The post-meeting summary is always user-approved before being saved
-- The tool does not send meeting summaries anywhere (email, Slack, etc.) without
-  explicit user action — even at autonomy Level 4
+### CLI
+
+```
+[User switches active CEO]
+  exec-in-a-box --ceo visionary
+  Or interactively: type /switch at the prompt for a numbered menu.
+  Prompt prefix updates: [VISIONARY] >
+  Prior conversation history for this CEO is shown on switch.
+```
+
+### Claude Skill
+
+```
+[User specifies CEO in command]
+  /exec-in-a-box --ceo analyst "What's the risk profile?"
+  Skill tracks active CEO in session state.
+  History accessible via /exec-in-a-box history --ceo analyst
+```
 
 ---
 
-## Journey 4: Changing Autonomy Level
+## Journey 4: Creating and Managing Artifacts
+
+When a CEO generates a document, analysis, or other artifact, it is saved
+and accessible across sessions.
+
+### Web App
 
 ```
-[User runs: exec config autonomy]
+[CEO response contains or generates an artifact]
+  e.g. "Here's the strategic brief you asked for: [artifact]"
         |
         v
-[Show current level with plain-language description]
+[Artifact saved to artifacts/<session-id>/]
+  Artifact appears in the left pane artifact explorer immediately.
+  Type icon assigned (document, spreadsheet, analysis).
         |
         v
-[Show all four levels with examples]
-  Highlight current level. If moving up, show a plain-language explanation of
-  what additional trust the user is granting. If moving down, confirm.
+[User clicks artifact in left pane]
+  Opens in an overlay panel or new tab.
+  User can rename, export, or delete.
+```
+
+### CLI
+
+```
+exec-in-a-box artifacts list          # list all artifacts
+exec-in-a-box artifacts open <id>     # open in $EDITOR or print to stdout
+exec-in-a-box artifacts export <id>   # save to a specified path
+```
+
+### Claude Skill
+
+```
+Artifact reference returned inline as a markdown block.
+/exec-in-a-box artifacts list    # list artifacts
+/exec-in-a-box artifacts <id>    # print artifact content
+```
+
+---
+
+## Journey 5: Announce to Slack
+
+User composes and sends a message to a configured Slack channel. The CEO never
+auto-sends — the user always reviews before anything is posted.
+
+### Web App
+
+```
+[User clicks "Announce" button or opens Announce from a CEO response]
+        |
+        v
+[Modal opens]
+  Left half: markdown/text input (pre-populated with selected CEO response if triggered from one)
+  Right half: live Slack preview (renders mrkdwn formatting and block elements)
+        |
+        v
+[User edits, previews, confirms]
+  "Post to #channel-name?" confirmation with final rendered preview
+        |
+        v
+[Webhook call sent]
+  Success: toast "Posted to #channel-name."
+  Failure: "Couldn't reach Slack. Check your webhook URL in settings."
+```
+
+### CLI
+
+```
+exec-in-a-box slack "message"         # send a message
+exec-in-a-box slack --last            # send last CEO recommendation
+exec-in-a-box slack --preview "msg"   # print Slack block preview to terminal before sending
+```
+
+### Claude Skill
+
+```
+/exec-in-a-box slack --last           # announce last recommendation
+/exec-in-a-box slack "message"        # send a composed message
+```
+
+---
+
+## Journey 6: Changing Autonomy Level
+
+Adjustable per-CEO at any time. Levels 3 and 4 always require explicit acknowledgment.
+
+### Web App
+
+```
+[User clicks autonomy level buttons below CEO portrait]
+  Buttons labeled 1–4. Active level highlighted in Hot Magenta.
+  Hover tooltip describes each level in plain language.
         |
         v
 [If moving to Level 3 or 4]
-  - Require explicit acknowledgment: "I understand that at this level,
-    the CEO will [specific behavior]. I want to proceed."
-  - Log the change with timestamp to board/config.md
+  Confirmation modal: plain-language description of what this level means,
+  what it will do automatically, and an explicit "I understand" checkbox.
+  User must check the box and confirm — not just click OK.
         |
         v
-[Change saved. Confirm new level to user.]
+[Change saved. Button state updates. Change logged with timestamp.]
 ```
 
-**Guardrails:**
-- Level 3 and 4 are not available in MVP (enforced in code, not config)
-- Moving to Level 3 or 4 always requires an explicit acknowledgment — not just a Y/N
-- Every autonomy level change is logged with timestamp
+### CLI
+
+```
+exec-in-a-box config autonomy --ceo operator --level 2
+  Shows current level + description of target level.
+  Requires explicit confirmation for Level 3/4 ("type CONFIRM to proceed").
+  Change logged to board/config.md with timestamp.
+```
 
 ---
 
-## Journey 5: The Exec Replacement Audit (Existing Orgs)
+## Journey 7: All-Hands Meeting Facilitation
 
-For users who want to build a case for replacing or restructuring their executive team.
+(V1 feature — not available in current release.)
+
+The tool plans and facilitates a meeting about product direction.
+
+```
+[User requests an all-hands via any interface]
+        |
+        v
+[Tool gathers context: roadmap, decisions log, open questions]
+  Asks: who is attending? What topics must be covered?
+        |
+        v
+[Agenda generated → user reviews and approves before anything proceeds]
+        |
+        v
+[Meeting facilitation mode]
+  Each agenda item presented in sequence.
+  Board invoked for items needing strategic input.
+  Decisions tracked in real time.
+        |
+        v
+[Post-meeting summary → user reviews and approves → saved]
+  Summary saved to sessions/. Decisions added to org/decisions.md.
+  Action items offered for backlog.
+```
+
+**Guardrails:**
+- Agenda always user-approved before facilitation begins
+- Summary always user-approved before being saved
+- Tool does not send meeting summaries externally without explicit user action
+
+---
+
+## Journey 8: The Exec Replacement Audit (V2+)
+
+For users building a case for replacing or restructuring their executive team.
 
 ```
 [User requests an exec audit]
-  "Build me a case for restructuring our leadership"
         |
         v
-[Tool asks for context]
-  - What is the current org structure? (User describes or uploads a doc)
-  - What is the stated mission/values of the org?
-  - What outcomes matter most to the workers and stakeholders you're trying to serve?
+[Tool asks for org structure context]
+  Current structure, stated mission/values, what outcomes matter most to workers.
         |
         v
-[Board analyzes the structure]
-  - Each archetype independently assesses the structure against the stated mission/values
-  - Identifies gaps between stated values and structural incentives
-  - Identifies decision-making bottlenecks, single points of failure, misaligned incentives
+[Board analyzes structure]
+  Each archetype assesses against stated mission/values.
+  Identifies gaps, bottlenecks, misaligned incentives.
         |
         v
-[Tool produces a structured report]
-  - What the current structure optimizes for (whether intentional or not)
-  - Where the structure contradicts the org's stated values
-  - What a more democratic/worker-aligned structure could look like
-  - The case for change, written in plain language, suitable for sharing internally
-        |
-        v
-[User reviews, edits, and decides what to do with it]
-  The report is the user's document. The tool has no opinion on what they do next.
+[Structured report generated → user reviews]
+  What the structure optimizes for.
+  Where it contradicts stated values.
+  What a more democratic/worker-aligned structure could look like.
+  Plain-language, suitable for sharing internally.
 ```
 
 **Guardrails:**
-- The report is explicitly framed as analysis and a case for consideration — not
-  a legal document, HR advice, or a guarantee of any outcome
-- A disclaimer is included in the report output and cannot be removed
+- Report explicitly framed as analysis, not legal/HR advice
+- Disclaimer included in output and cannot be removed
 
 ---
 
-## Journey 6: The Easter Egg — What We Would Have Built
+## Journey 9: The Easter Egg — What We Would Have Built (V2+)
 
-A hidden, optional, cathartic feature. Not surfaced in main navigation.
+A hidden, optional, cathartic feature. Not in main navigation.
 
 ```
 [User discovers or activates the feature]
-  (e.g., a specific command, or a prompt like "what would we have built?")
+  (specific command or prompt phrase)
         |
         v
-[Tool asks]
-  "Tell me about the product you were working on and what happened.
-   No filter — just say what you want to say."
-        |
-        v
-[User vents / describes the product and the situation]
+[Tool asks: tell me about the product you were working on and what happened]
         |
         v
 [Board session: the alternative timeline]
-  "If the team that built this hadn't been let go, and they had the right
-   resources and support, what could this product have become?"
-  Board deliberates. Output is generative and celebratory — not a postmortem.
+  Generative and celebratory — not a postmortem.
+  What could this have become? What was genuinely good about it?
+  What did the team that built it deserve?
         |
         v
-[Output: The Better Product]
-  - What the product could have been
-  - What was genuinely good about the work that was done
-  - What the team that built it deserved
-  The tone is warm, specific, and human. This is not a business analysis.
-        |
-        v
-[Optional: export as a document the user can keep]
+[Optional export as a document the user keeps]
 ```
 
 **Guardrails:**
-- This feature does not connect to external services
-- Output is never automatically shared anywhere
-- The tool does not minimize, rationalize, or provide "both sides" of a layoff.
-  Its job here is to be on the user's side.
+- Does not connect to external services
+- Output never automatically shared anywhere
+- The tool does not provide "both sides" of a layoff. It is on the user's side.
