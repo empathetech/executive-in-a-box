@@ -248,22 +248,43 @@ planned design — unchanged in intent.
 | Layer | Choice | Notes |
 |-------|--------|-------|
 | Python web framework | FastAPI + uvicorn | Async-first, native SSE support |
-| Frontend | React + Vite | Served by FastAPI in production (Option B) |
+| Frontend | React + TypeScript + Vite | Served by FastAPI in production (Option B) |
 | Streaming | SSE (Server-Sent Events) | LLM responses + job state notifications |
 | Job system | asyncio background tasks | State persisted to `jobs/<job-id>.json`; no Celery/Redis |
 | Styling | Tailwind + custom CSS | Tailwind for layout; custom CSS for pixel-art/CRT treatments |
+| Frontend state | React built-in hooks only | `useState`/`useContext`/`useReducer`; no Redux/Zustand in V1 |
 | Build output | `web/dist/` bundled into pip package | Built in CI; not checked into git |
 
 **Development workflow:**
 ```bash
-exec-in-a-box dev        # starts FastAPI + Vite together (hot reload)
-exec-in-a-box web        # production mode — serves pre-built React app
-cd web && npm run build  # manual build (required after fresh clone)
+exec-in-a-box dev                        # starts FastAPI + Vite together (hot reload)
+exec-in-a-box web                        # production — serves pre-built React app
+cd web && npm install && npm run build   # manual build (required after fresh clone)
 ```
 
-See `decisions/2026-04-04-frontend-stack.md` for the React vs. HTMX decision
-and Option A vs. Option B rationale, including notes on switching to Option A
-in the future if needed.
+**Package structure:**
+```
+src/exec_in_a_box/
+  __main__.py       # CLI entry point
+  jobs.py           # async job system
+  server/           # FastAPI app and routes (never imported by CLI)
+    app.py
+    routes/         # one file per API route group
+  fetch.py          # web content fetching (renamed from web.py)
+  archetypes.py     # existing core modules — unchanged
+  config.py, credentials.py, providers.py, session.py
+  setup.py, slack.py, storage.py, wrapper.py
+
+web/                # React + TypeScript app (project root)
+  src/
+    types/          # API response types, kept in sync with Python schemas
+  package.json
+  tsconfig.json     # strict mode
+  vite.config.ts
+```
+
+See `decisions/2026-04-04-frontend-stack.md` for React vs. HTMX and Option A vs. B.
+See `decisions/2026-04-04-package-structure.md` for package structure rationale.
 
 ---
 
