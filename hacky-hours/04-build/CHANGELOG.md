@@ -13,6 +13,85 @@
      ### Fixed
      - ... -->
 
+## [v1.0.0] — 2026-04-04
+
+### Added
+
+**Three-Interface Model**
+- Web app (FastAPI + React + TypeScript + Vite, served at `localhost:8421`)
+- CLI design pass: neon ANSI colors, box-drawing, NO_COLOR support
+- Claude skill: `/exec-in-a-box` slash command for Claude Code
+
+**Web App**
+- Three-pane layout: artifact explorer / chat / usage dashboard
+- CEO portrait strip with active/Executizing/error states and autonomy toggles
+- Per-CEO persistent chat history with typewriter-effect support
+- Executize button: dispatches deep-work jobs as async background tasks
+- Multi-CEO switching while jobs run (SSE job completion notifications)
+- Artifact explorer (left pane): session artifacts listed, click to open
+- LLM usage/cost dashboard (right pane, CRT treatment)
+- Announce modal: compose + preview + send to Slack (preview enforced before send)
+- Design language: neon/8-bit/CRT aesthetic per STYLE_GUIDE.md
+- Tailwind CSS + custom CSS variables for full design system
+
+**CLI Design Pass**
+- ANSI color design language (respects NO_COLOR)
+- Unicode box drawing for response display
+- Ambition level spectrum bar
+- `/switch` meta-command for multi-CEO switching mid-session
+- `/executize` meta-command for background job dispatch
+- `/jobs` meta-command for job status listing
+- `exec-in-a-box artifacts list|open` subcommands
+- `exec-in-a-box usage` subcommand (job/session summary)
+
+**Async Job System**
+- `jobs.py`: queued → running → complete/failed lifecycle
+- Job state persisted to `~/.executive-in-a-box/jobs/<job-id>.json`
+- SSE streaming for web app job notifications (`GET /api/stream/jobs/{id}`)
+- Background threading for CLI job dispatch
+
+**FastAPI Server**
+- `server/` subpackage (never imported by CLI)
+- Routes: `/api/config`, `/api/session/message`, `/api/jobs`, `/api/stream`, `/api/artifacts`, `/api/slack`, `/api/board`
+- `exec-in-a-box web` command (production — serves pre-built React app)
+- `exec-in-a-box dev` command (FastAPI + Vite with hot reload)
+- `--host` flag for Tailscale exposure
+
+**Multi-LLM Board**
+- `board.py`: parallel deliberation across all archetypes using ThreadPoolExecutor
+- Common ground detection, spectrum view, aggregated pros/cons
+- Rate-limit safe (configurable max_workers)
+- `/api/board/deliberate` endpoint
+
+**Memory**
+- `memory/open-questions.md` injected into org context alongside strategic-context.md
+
+**Autonomy Levels 3 & 4**
+- `autonomy.py`: action type registry with ALWAYS_REQUIRE_APPROVAL hard set
+- Explicit acknowledgment flow (CLI + web) required before enabling Level 3 or 4
+- Audit log (`audit.log.md`) written for every action evaluation
+- Level 3: auto-approve low-stakes actions (log, save, memory updates)
+- Level 4: autonomous within scope; all ALWAYS_REQUIRE_APPROVAL types remain blocked
+
+**All-Hands Meeting**
+- `all_hands.py`: context gather → agenda → board deliberation → summary → decisions log
+- `exec-in-a-box all-hands` CLI command
+
+**Ollama Provider**
+- `OllamaProvider` adapter for local LLM via Ollama
+- Auto-detects running Ollama server at `http://localhost:11434`
+- Provider option: `ollama` (fully offline operation)
+
+**Package**
+- `web.py` renamed to `fetch.py`; all import sites updated
+- `storage.py` extended with `jobs` and `artifacts` subdirectories
+- Version bumped to 1.0.0
+
+### Dependencies Added
+- fastapi, uvicorn[standard], sse-starlette (server)
+
+---
+
 ## [v0.2.0] — 2026-03-21
 
 ### Added

@@ -53,6 +53,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="The provider to test",
     )
 
+    web_parser = subparsers.add_parser(
+        "web",
+        help="Start the web app (serves pre-built React UI + API)",
+    )
+    web_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1; use 0.0.0.0 for Tailscale)",
+    )
+    web_parser.add_argument(
+        "--port",
+        type=int,
+        default=8421,
+        help="Port to listen on (default: 8421)",
+    )
+
+    dev_parser = subparsers.add_parser(
+        "dev",
+        help="Start dev server (FastAPI + Vite with hot reload)",
+    )
+    dev_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host for FastAPI (default: 127.0.0.1)",
+    )
+    dev_parser.add_argument(
+        "--port",
+        type=int,
+        default=8421,
+        help="Port for FastAPI (default: 8421)",
+    )
+
     slack_parser = subparsers.add_parser(
         "slack",
         help="Send a message to Slack via webhook",
@@ -66,6 +98,35 @@ def build_parser() -> argparse.ArgumentParser:
             "--last for last recommendation, "
             "or setup to configure"
         ),
+    )
+
+    artifacts_parser = subparsers.add_parser(
+        "artifacts",
+        help="Manage session artifacts",
+    )
+    artifacts_subparsers = artifacts_parser.add_subparsers(dest="artifacts_command")
+    artifacts_subparsers.add_parser("list", help="List all artifacts")
+    artifacts_open = artifacts_subparsers.add_parser(
+        "open", help="Print an artifact to stdout"
+    )
+    artifacts_open.add_argument(
+        "artifact_id",
+        help='Artifact ID in "session-id/filename" format',
+    )
+
+    subparsers.add_parser(
+        "usage",
+        help="Show token usage and job history",
+    )
+
+    all_hands_parser = subparsers.add_parser(
+        "all-hands",
+        help="Facilitate an all-hands meeting across all archetypes",
+    )
+    all_hands_parser.add_argument(
+        "items",
+        nargs="*",
+        help="Agenda items (prompted interactively if not provided)",
     )
 
     return parser
@@ -124,12 +185,23 @@ def cmd_autonomy() -> None:
         print("Please enter 1 or 2.")
         return
 
-    if new_level not in (1, 2):
-        if new_level in (3, 4):
-            print("Levels 3 and 4 are not available yet (coming in V1).")
-        else:
-            print("Please enter 1 or 2.")
+    if new_level not in (1, 2, 3, 4):
+        print("Please enter 1, 2, 3, or 4.")
         return
+
+    if new_level in (3, 4):
+        from exec_in_a_box.autonomy import get_acknowledgment_text
+        ack_text = get_acknowledgment_text(new_level)
+        print()
+        print(ack_text)
+        try:
+            confirmation = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return
+        if confirmation != "CONFIRM":
+            print("Not confirmed. Level unchanged.")
+            return
 
     if new_level == config.autonomy_level:
         print("No change.")
@@ -388,6 +460,222 @@ def cmd_history() -> None:
     print(f"  Sessions stored at: {storage.get_data_dir() / 'sessions'}")
 
 
+def cmd_web(host: str, port: int, dev: bool) -> None:
+    """Start the FastAPI server (and optionally Vite in dev mode)."""
+    import subprocess
+    import threading
+    import uvicorn
+
+    from exec_in_a_box import storage
+    from exec_in_a_box.setup import run_setup
+
+    if not storage.is_initialized():
+        print("Welcome to Executive in a Box!")
+        print("Let's get you set up first.")
+        run_setup()
+        print()
+
+    if dev:
+        # Start Vite in a background thread
+        import shutil
+        from pathlib import Path
+
+        web_dir = Path(__file__).parent
+        for _ in range(5):
+            if (web_dir / "web" / "package.json").exists():
+                break
+            web_dir = web_dir.parent
+
+        vite_dir = web_dir / "web"
+        npm = shutil.which("npm")
+
+        if npm and vite_dir.exists():
+            def _run_vite():
+                subprocess.run(
+                    [npm, "run", "dev"],
+                    cwd=str(vite_dir),
+                )
+
+            vite_thread = threading.Thread(target=_run_vite, daemon=True)
+            vite_thread.start()
+            print(f"  Vite dev server: http://localhost:5173")
+        else:
+            print(
+                "  [!] Vite not started — web/ directory or npm not found. "
+                "Run: cd web && npm install"
+            )
+
+    print(f"  API server:      http://{host}:{port}")
+    print()
+
+    from exec_in_a_box.server.app import create_app
+
+    application = create_app(serve_static=not dev)
+    uvicorn.run(application, host=host, port=port, log_level="warning")
+
+
+def cmd_artifacts_list() -> None:
+    from exec_in_a_box import storage
+    from exec_in_a_box.cli_display import C, colorize
+
+    base = storage.get_data_dir() / "artifacts"
+    if not base.exists() or not any(base.iterdir()):
+        print(colorize("  No artifacts yet.", C.DIM))
+        return
+
+    print()
+    print(colorize("  Artifacts:", C.CYAN))
+    print()
+    for session_dir in sorted(base.iterdir(), reverse=True):
+        if not session_dir.is_dir():
+            continue
+        for f in sorted(session_dir.iterdir()):
+            if f.is_file():
+                size = f.stat().st_size
+                size_str = f"{size}B" if size < 1024 else f"{size // 1024}KB"
+                print(
+                    colorize(f"  {session_dir.name}/{f.name}", C.WHITE)
+                    + colorize(f"  ({size_str})", C.DIM)
+                )
+    print()
+
+
+def cmd_artifacts_open(artifact_id: str) -> None:
+    from exec_in_a_box import storage
+    from exec_in_a_box.cli_display import print_error
+
+    parts = artifact_id.strip("/").split("/")
+    if len(parts) != 2:
+        print_error('Artifact ID must be "session-id/filename". Run: exec-in-a-box artifacts list')
+        sys.exit(1)
+
+    session_id, filename = parts
+    path = storage.get_data_dir() / "artifacts" / session_id / filename
+    if not path.exists():
+        print_error(f"Artifact not found: {artifact_id}")
+        sys.exit(1)
+
+    print(path.read_text(encoding="utf-8"))
+
+
+def cmd_usage() -> None:
+    from exec_in_a_box import storage
+    from exec_in_a_box.cli_display import C, colorize, divider
+    from exec_in_a_box.jobs import list_jobs
+
+    jobs = list_jobs()
+    print()
+    print(colorize("  Usage Summary", C.BOLD, C.CYAN))
+    print(divider())
+
+    if not jobs:
+        print(colorize("  No jobs run yet.", C.DIM))
+    else:
+        status_counts: dict[str, int] = {}
+        for j in jobs:
+            status_counts[j["status"]] = status_counts.get(j["status"], 0) + 1
+
+        print()
+        print(colorize("  Executize Jobs", C.BOLD))
+        print()
+        for status, count in status_counts.items():
+            color = {
+                "complete": C.LIME,
+                "failed": C.MAGENTA,
+                "running": C.CYAN,
+                "queued": C.YELLOW,
+            }.get(status, C.DIM)
+            print(
+                colorize(f"    {status:<12}", color)
+                + colorize(str(count), C.BOLD, C.WHITE)
+            )
+        print()
+        print(colorize(f"  Total jobs: {len(jobs)}", C.DIM))
+
+    sessions = storage.list_sessions()
+    print()
+    print(colorize(f"  Sessions recorded: {len(sessions)}", C.DIM))
+    print()
+
+
+def cmd_all_hands(items: list[str]) -> None:
+    from exec_in_a_box.all_hands import (
+        build_agenda,
+        facilitate,
+        gather_context,
+        save_all_hands_log,
+    )
+    from exec_in_a_box.cli_display import C, colorize, divider, print_banner
+    from exec_in_a_box.config import load_config
+    from exec_in_a_box.credentials import get_api_key
+
+    config = load_config()
+    if config is None:
+        print("No configuration found. Run: exec-in-a-box setup")
+        sys.exit(1)
+
+    api_key = get_api_key(config.provider_name)
+    if api_key is None:
+        print(f"No API key for {config.provider_name}. Run: exec-in-a-box setup")
+        sys.exit(1)
+
+    print_banner()
+    print(colorize("  All-Hands Meeting Facilitation", C.BOLD, C.CYAN))
+    print(divider())
+    print()
+
+    # Gather agenda items
+    agenda_items = list(items)
+    if not agenda_items:
+        print(colorize("  Enter agenda items (one per line, empty line to finish):", C.DIM))
+        print()
+        while True:
+            try:
+                line = input(colorize("  Item: ", C.CYAN)).strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not line:
+                break
+            agenda_items.append(line)
+
+    if not agenda_items:
+        print(colorize("  No agenda items. Exiting.", C.DIM))
+        return
+
+    print()
+    print(colorize(f"  {len(agenda_items)} agenda item(s). Gathering context...", C.DIM))
+    org_context = gather_context()
+    agenda = build_agenda(agenda_items, org_context)
+
+    print(colorize("  Facilitating — all archetypes deliberating in parallel...", C.CYAN))
+    print()
+
+    result = facilitate(agenda, config.provider_name, api_key)
+
+    print(colorize("  ─── Meeting Summary ───", C.CYAN))
+    print()
+    print(result.summary)
+
+    if result.decisions:
+        print()
+        print(colorize("  ─── Tentative Decisions ───", C.LIME))
+        for d in result.decisions:
+            print(colorize(f"    • ", C.LIME) + d)
+
+    print()
+    try:
+        save_choice = input(
+            colorize("  Save summary and decisions to log? [Y/N]: ", C.DIM)
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        save_choice = "n"
+
+    if save_choice in ("y", "yes"):
+        save_all_hands_log(result)
+        print(colorize("  Saved to sessions/all-hands.md and org/decisions.md.", C.LIME))
+    print()
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -421,10 +709,35 @@ def main() -> None:
         cmd_history()
         return
 
+    if args.command == "web":
+        cmd_web(host=args.host, port=args.port, dev=False)
+        return
+
+    if args.command == "dev":
+        cmd_web(host=args.host, port=args.port, dev=True)
+        return
+
     if args.command == "slack":
         from exec_in_a_box.slack import run_slack_command
 
         run_slack_command(args.slack_args)
+        return
+
+    if args.command == "artifacts":
+        if args.artifacts_command == "list":
+            cmd_artifacts_list()
+        elif args.artifacts_command == "open":
+            cmd_artifacts_open(args.artifact_id)
+        else:
+            parser.parse_args(["artifacts", "--help"])
+        return
+
+    if args.command == "usage":
+        cmd_usage()
+        return
+
+    if args.command == "all-hands":
+        cmd_all_hands(args.items)
         return
 
 

@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Executive in a Box — Design System
+   Neon / 8-bit / CRT aesthetic, Rocko's Modern Life color register
+   Reference: hacky-hours/02-design/STYLE_GUIDE.md
+   ============================================================ */
+
+:root {
+  /* Brand palette */
+  --hot-magenta:   #FF2D78;
+  --electric-cyan: #00F5FF;
+  --lime-zap:      #7FFF00;
+  --solar-yellow:  #FFE600;
+  --deep-purple:   #3D00CC;
+  --void-black:    #0A0A0F;
+  --ghost-white:   #F0F0FF;
+
+  /* Semantic aliases */
+  --bg:        var(--void-black);
+  --bg-panel:  #12121A;
+  --bg-card:   #1A1A2E;
+  --text:      var(--ghost-white);
+  --text-muted: #8888AA;
+  --accent:    var(--electric-cyan);
+  --accent-2:  var(--hot-magenta);
+  --border:    #2A2A44;
+
+  /* CRT scanline overlay (applied to right pane) */
+  --crt-scanline: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.15) 2px,
+    rgba(0, 0, 0, 0.15) 4px
+  );
+
+  /* Typography */
+  --font-mono: 'Courier New', Courier, monospace;
+  --font-ui: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ---- Base ---- */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+/* ---- Neon text utilities ---- */
+
+.neon-cyan {
+  color: var(--electric-cyan);
+  text-shadow: 0 0 6px var(--electric-cyan), 0 0 12px rgba(0, 245, 255, 0.4);
+}
+
+.neon-magenta {
+  color: var(--hot-magenta);
+  text-shadow: 0 0 6px var(--hot-magenta), 0 0 12px rgba(255, 45, 120, 0.4);
+}
+
+.neon-lime {
+  color: var(--lime-zap);
+  text-shadow: 0 0 6px var(--lime-zap), 0 0 12px rgba(127, 255, 0, 0.4);
+}
+
+.neon-yellow {
+  color: var(--solar-yellow);
+  text-shadow: 0 0 6px var(--solar-yellow), 0 0 12px rgba(255, 230, 0, 0.4);
+}
+
+/* ---- CRT panel treatment ---- */
+
+.crt-panel {
+  background: var(--bg-panel);
+  background-image: var(--crt-scanline);
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.crt-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.3) 100%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ---- Pixel/8-bit box border ---- */
+
+.pixel-border {
+  border: 2px solid var(--electric-cyan);
+  box-shadow:
+    0 0 4px var(--electric-cyan),
+    inset 0 0 4px rgba(0, 245, 255, 0.1);
+}
+
+/* ---- Scrollbar ---- */
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--electric-cyan); }

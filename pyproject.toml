@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "executive-in-a-box"
-version = "0.2.0"
+version = "1.0.0"
 description = "AI-powered executive advisor — CEO-level strategic guidance without a human CEO."
 readme = "README.md"
 license = "MIT"
@@ -31,7 +31,13 @@ dependencies = [
     "keyring>=25.0.0",
     "beautifulsoup4>=4.12.0",
     "httpx>=0.25.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "sse-starlette>=2.1.0",
 ]
+
+[tool.hatch.build.targets.wheel.force-include]
+"web/dist" = "exec_in_a_box/web_dist"
 
 [project.scripts]
 exec-in-a-box = "exec_in_a_box.__main__:main"

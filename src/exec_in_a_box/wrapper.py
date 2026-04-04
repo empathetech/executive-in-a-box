@@ -115,6 +115,13 @@ def load_org_context() -> str:
     if strategic_context:
         parts.append(f"STRATEGIC CONTEXT:\n{strategic_context.strip()}")
 
+    open_questions = storage.read_file("memory/open-questions.md")
+    if open_questions:
+        # Include only first 10 lines to keep context tight
+        lines = open_questions.strip().splitlines()
+        recent = "\n".join(lines[:10])
+        parts.append(f"OPEN QUESTIONS (flagged for resolution):\n{recent}")
+
     if not parts:
         return "No org context has been configured yet."
 
@@ -148,7 +155,7 @@ def build_prompt(
     system_prompt = archetype.build_system_prompt(safe_context)
 
     # Fetch any URLs in the user's question
-    from exec_in_a_box.web import extract_urls, fetch_urls_for_context
+    from exec_in_a_box.fetch import extract_urls, fetch_urls_for_context
 
     urls = extract_urls(user_question)
     web_context = ""

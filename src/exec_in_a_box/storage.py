@@ -15,7 +15,7 @@ from pathlib import Path
 DEFAULT_DATA_DIR = Path.home() / ".executive-in-a-box"
 
 # Subdirectories created on first run
-SUBDIRS = ["org", "board", "board/archetypes", "sessions", "memory"]
+SUBDIRS = ["org", "board", "board/archetypes", "sessions", "memory", "jobs", "artifacts"]
 
 # Files with restricted permissions (owner read/write only)
 # Note: API keys are stored in the OS keychain, not in files.
