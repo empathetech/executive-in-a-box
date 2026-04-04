@@ -70,6 +70,20 @@ class ArtifactCreate(BaseModel):
     content: str
 
 
+@router.delete("/{session_id}/{filename}")
+def delete_artifact(session_id: str, filename: str):
+    path = _artifacts_dir() / session_id / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+    path.unlink()
+    # Remove the parent directory if now empty
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+    return {"deleted": True}
+
+
 @router.post("/{session_id}/{filename}/reveal")
 def reveal_artifact(session_id: str, filename: str):
     import platform

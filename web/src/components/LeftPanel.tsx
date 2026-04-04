@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react'
 import type { ArtifactMeta, Job } from '../types/api'
 import type { CeoState, ChatMessage } from '../App'
-import { listArtifacts, listJobs, getArtifact, revealArtifact } from '../lib/api'
+import { listArtifacts, listJobs, getArtifact, deleteArtifact, revealArtifact } from '../lib/api'
 import { ChatHistoryModal } from './ChatHistoryModal'
 
 const ARCHETYPE_COLORS: Record<string, string> = {
@@ -105,6 +105,7 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
   onOpenArtifact: (a: ArtifactMeta) => void
 }) {
   const [copyStates, setCopyStates] = useState<Record<string, boolean>>({})
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   async function handleCopy(artifact: ArtifactMeta) {
     try {
@@ -124,6 +125,18 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
       await revealArtifact(artifact.session_id, artifact.filename)
     } catch {
       // silently fail
+    }
+  }
+
+  async function handleDelete(artifact: ArtifactMeta) {
+    try {
+      await deleteArtifact(artifact.session_id, artifact.filename)
+      const updated = await listArtifacts()
+      onRefresh(updated)
+    } catch {
+      // silently fail
+    } finally {
+      setConfirmDelete(null)
     }
   }
 
@@ -165,7 +178,7 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
                       {formatDate(artifact.modified_at)} · {formatSize(artifact.size_bytes)}
                     </p>
                   </button>
-                  <div className="flex gap-1 mt-1">
+                  <div className="flex gap-1 mt-1 flex-wrap">
                     <button
                       onClick={() => void handleCopy(artifact)}
                       className="px-2 py-0.5 font-mono text-[10px] rounded border border-[#2A2A44] text-[#8888AA] hover:text-[#F0F0FF] hover:border-[#00F5FF] transition-colors"
@@ -180,6 +193,32 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
                     >
                       📂 Finder
                     </button>
+                    {confirmDelete === artifact.id ? (
+                      <>
+                        <button
+                          onClick={() => void handleDelete(artifact)}
+                          className="px-2 py-0.5 font-mono text-[10px] rounded border border-[#FF2D78] text-[#FF2D78] hover:bg-[#FF2D7822] transition-colors"
+                          aria-label="Confirm delete"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => setConfirmDelete(null)}
+                          className="px-2 py-0.5 font-mono text-[10px] rounded border border-[#2A2A44] text-[#8888AA] hover:text-[#F0F0FF] transition-colors"
+                          aria-label="Cancel delete"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDelete(artifact.id)}
+                        className="px-2 py-0.5 font-mono text-[10px] rounded border border-[#2A2A44] text-[#8888AA] hover:text-[#FF2D78] hover:border-[#FF2D78] transition-colors"
+                        aria-label={`Delete ${artifact.filename}`}
+                      >
+                        ✕ Delete
+                      </button>
+                    )}
                   </div>
                 </div>
               </li>
