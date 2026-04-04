@@ -93,21 +93,30 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
           <div className="flex flex-1 gap-3 px-4 pt-3 pb-2 overflow-hidden">
             {/* Portrait + name */}
             <div className="flex flex-col items-center gap-1 flex-shrink-0">
-              <div
-                className={['rounded overflow-hidden flex-shrink-0', isExecutizing ? 'opacity-60' : ''].join(' ')}
-                style={{
-                  width: 96,
-                  height: 96,
-                  border: `2px solid ${accentColor}`,
-                  boxShadow: `0 0 12px ${accentColor}44`,
-                }}
-                aria-hidden="true"
-              >
-                <img
-                  src={`/ceo-${activeCeoSlug}.png`}
-                  alt={activeArchetype?.name ?? activeCeoSlug}
-                  className="w-full h-full object-cover"
-                />
+              <div className="relative flex-shrink-0" style={{ width: 96, height: 96 }} aria-hidden="true">
+                {/* Pulsing glow ring when active CEO is thinking/executizing */}
+                {isExecutizing && (
+                  <div
+                    className="absolute inset-0 rounded animate-ping"
+                    style={{ border: `2px solid ${accentColor}`, opacity: 0.6 }}
+                  />
+                )}
+                <div
+                  className="rounded overflow-hidden w-full h-full"
+                  style={{
+                    border: `2px solid ${accentColor}`,
+                    boxShadow: isExecutizing
+                      ? `0 0 20px ${accentColor}88, 0 0 40px ${accentColor}44`
+                      : `0 0 12px ${accentColor}44`,
+                    transition: 'box-shadow 0.3s ease',
+                  }}
+                >
+                  <img
+                    src={`/ceo-${activeCeoSlug}.png`}
+                    alt={activeArchetype?.name ?? activeCeoSlug}
+                    className={['w-full h-full object-cover transition-opacity', isExecutizing ? 'opacity-70' : 'opacity-100'].join(' ')}
+                  />
+                </div>
               </div>
               <div className="text-center">
                 {isExecutizing ? (
@@ -135,21 +144,31 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
                     <button
                       key={arch.slug}
                       onClick={() => onSelectCeo(arch.slug)}
-                      title={arch.name}
-                      aria-label={`Switch to ${arch.name}`}
-                      className="rounded-full overflow-hidden flex-shrink-0 hover:opacity-80 transition-opacity"
-                      style={{
-                        width: 32,
-                        height: 32,
-                        border: `2px solid ${otherColor}`,
-                        opacity: otherExecutizing ? 0.5 : 1,
-                      }}
+                      title={otherExecutizing ? `${arch.name} — thinking…` : arch.name}
+                      aria-label={`Switch to ${arch.name}${otherExecutizing ? ' (thinking)' : ''}`}
+                      className="relative flex-shrink-0 hover:opacity-90 transition-opacity"
+                      style={{ width: 32, height: 32 }}
                     >
-                      <img
-                        src={`/ceo-${arch.slug}.png`}
-                        alt={arch.name}
-                        className="w-full h-full object-cover"
-                      />
+                      {/* Pulsing ring for busy mini icons */}
+                      {otherExecutizing && (
+                        <div
+                          className="absolute inset-0 rounded-full animate-ping"
+                          style={{ border: `2px solid ${otherColor}`, opacity: 0.7 }}
+                        />
+                      )}
+                      <div
+                        className="rounded-full overflow-hidden w-full h-full"
+                        style={{
+                          border: `2px solid ${otherColor}`,
+                          boxShadow: otherExecutizing ? `0 0 8px ${otherColor}88` : undefined,
+                        }}
+                      >
+                        <img
+                          src={`/ceo-${arch.slug}.png`}
+                          alt={arch.name}
+                          className={['w-full h-full object-cover', otherExecutizing ? 'opacity-60' : ''].join(' ')}
+                        />
+                      </div>
                     </button>
                   )
                 })}
