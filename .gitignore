@@ -32,5 +32,13 @@ htmlcov/
 # Debug logs
 *.log
 
+# Secrets and credentials (never commit these)
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
 # Executive in a Box user data (never commit this)
 .executive-in-a-box/
