@@ -6,7 +6,7 @@
  * Reference: hacky-hours/02-design/ARCHITECTURE.md § Interface Layer — Web App
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ArchetypeInfo, ConfigResponse, StatsResponse } from '../types/api'
 import type { CeoState } from '../App'
 import { getStats, setAutonomy } from '../lib/api'
@@ -61,6 +61,22 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
   const modified = ceoStats?.modified ?? 0
   const rejected = ceoStats?.rejected ?? 0
   const agreementRate = ceoStats ? Math.round(ceoStats.agreement_rate * 100) : null
+
+  // Session token total — sum input+output across all responses in current session
+  const sessionTokens = useMemo(() => {
+    return activeCeo?.history
+      .filter(m => m.response)
+      .reduce((sum, m) => sum + (m.response!.input_tokens + m.response!.output_tokens), 0) ?? 0
+  }, [activeCeo?.history])
+
+  // Most recent model name from any response in this session
+  const currentModel = useMemo(() => {
+    return activeCeo?.history
+      .slice()
+      .reverse()
+      .find(m => m.response)
+      ?.response?.model ?? null
+  }, [activeCeo?.history])
 
   const otherArchetypes = archetypes.filter(a => a.slug !== activeCeoSlug)
 
@@ -189,18 +205,24 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
           </div>
         </div>
 
-        {/* === RIGHT 55% — radar + stats === */}
-        <div className="flex flex-1 gap-2 px-4 py-3 border-l border-[#2A2A44] overflow-hidden">
-          {/* Radar chart — active CEO only, compact */}
-          <div className="flex-shrink-0" style={{ width: 140 }}>
+        {/* === RIGHT 60% — three equal columns === */}
+        <div className="flex flex-1 border-l border-[#2A2A44] overflow-hidden divide-x divide-[#2A2A44]">
+
+          {/* Column 1 — Radar chart */}
+          <div className="flex-1 flex flex-col items-center justify-center p-2 min-w-0">
+            <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase mb-1">
+              Personality
+            </p>
             {activeArchetype && (
               <RadarChart archetypes={[activeArchetype]} />
             )}
           </div>
 
-          {/* A/R/M stats */}
-          <div className="flex flex-col gap-2 flex-1 min-w-0">
-            {/* Agreement rate headline */}
+          {/* Column 2 — Session stats (A/R/M) */}
+          <div className="flex-1 flex flex-col gap-2 p-3 min-w-0 justify-center">
+            <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase">
+              Agreement
+            </p>
             <div>
               {agreementRate !== null ? (
                 <p className="font-mono text-2xl font-bold leading-none" style={{ color: accentColor }}>
@@ -210,11 +232,9 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
                 <p className="font-mono text-2xl font-bold leading-none text-[#444466]">—</p>
               )}
               <p className="font-mono text-[10px] text-[#8888AA] mt-0.5">
-                {total > 0 ? `${total} sessions` : 'no sessions yet'}
+                {total > 0 ? `${total} session${total !== 1 ? 's' : ''}` : 'no sessions yet'}
               </p>
             </div>
-
-            {/* Bars */}
             {total > 0 && (
               <div className="flex flex-col gap-1">
                 {[
@@ -226,34 +246,54 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
                     <div className="flex justify-between font-mono text-[9px] mb-0.5">
                       <span style={{ color }}>{label}</span>
                       <span className="text-[#8888AA]">
-                        {count} ({total > 0 ? Math.round((count / total) * 100) : 0}%)
+                        {count} · {Math.round((count / total) * 100)}%
                       </span>
                     </div>
-                    <div className="h-1.5 bg-[#1A1A2E] rounded-full overflow-hidden">
+                    <div className="h-1 bg-[#1A1A2E] rounded-full overflow-hidden">
                       <div
-                        className="h-full rounded-full transition-all"
-                        style={{ width: `${total > 0 ? (count / total) * 100 : 0}%`, backgroundColor: color }}
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${(count / total) * 100}%`, backgroundColor: color }}
                       />
                     </div>
                   </div>
                 ))}
               </div>
             )}
+          </div>
 
-            {/* Provider + API key */}
-            <div className="mt-auto font-mono text-[9px] text-[#8888AA] space-y-0.5">
-              <div className="flex gap-1">
-                <span>Provider:</span>
-                <span className="text-[#F0F0FF]">{config.provider_name}</span>
+          {/* Column 3 — API info */}
+          <div className="flex-1 flex flex-col gap-2 p-3 min-w-0 justify-center">
+            <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase">
+              API
+            </p>
+            <div className="font-mono text-[10px] space-y-1.5">
+              <div>
+                <p className="text-[#8888AA] text-[9px]">Provider</p>
+                <p className="text-[#F0F0FF]">{config.provider_name}</p>
               </div>
-              <div className="flex gap-1">
-                <span>API Key:</span>
-                <span className={config.api_key_set ? 'text-[#7FFF00]' : 'text-[#FF2D78]'}>
-                  {config.api_key_set ? '✓' : '✗ Missing'}
-                </span>
+              <div>
+                <p className="text-[#8888AA] text-[9px]">Model</p>
+                <p className="text-[#F0F0FF] truncate" title={currentModel ?? undefined}>
+                  {currentModel ?? <span className="text-[#444466]">—</span>}
+                </p>
+              </div>
+              <div>
+                <p className="text-[#8888AA] text-[9px]">Session tokens</p>
+                <p className="text-[#F0F0FF]">
+                  {sessionTokens > 0
+                    ? sessionTokens.toLocaleString()
+                    : <span className="text-[#444466]">—</span>}
+                </p>
+              </div>
+              <div>
+                <p className="text-[#8888AA] text-[9px]">API key</p>
+                <p className={config.api_key_set ? 'text-[#7FFF00]' : 'text-[#FF2D78]'}>
+                  {config.api_key_set ? '✓ set' : '✗ missing'}
+                </p>
               </div>
             </div>
           </div>
+
         </div>
       </div>
     </div>
