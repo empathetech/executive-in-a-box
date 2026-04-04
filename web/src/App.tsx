@@ -1,11 +1,11 @@
 import { useEffect, useReducer, useState } from 'react'
 import type { ConfigResponse, Job, ArtifactMeta, SessionResponse } from './types/api'
 import { getConfig, listArtifacts } from './lib/api'
-import { ArtifactPanel } from './components/ArtifactPanel'
 import { ArtifactModal } from './components/ArtifactModal'
+import { ArtifactPane } from './components/ArtifactPane'
 import { ChatPanel } from './components/ChatPanel'
-import { RightPanel } from './components/RightPanel'
-import { CeoStrip } from './components/CeoStrip'
+import { CeoHeroPanel } from './components/CeoHeroPanel'
+import { LeftPanel } from './components/LeftPanel'
 import { AnnounceModal } from './components/AnnounceModal'
 
 // ---- State ----
@@ -15,6 +15,8 @@ export interface ChatMessage {
   content: string
   response?: SessionResponse
   timestamp: string
+  decision?: 'adopted' | 'rejected' | 'modified'
+  modification?: string
 }
 
 export interface CeoState {
@@ -35,6 +37,8 @@ interface AppState {
   announceOpen: boolean
   announcePrefill: string
   announceArchetypeSlug: string
+  openArtifacts: ArtifactMeta[]
+  activeArtifactId: string | null
 }
 
 type AppAction =
@@ -48,6 +52,10 @@ type AppAction =
   | { type: 'SET_SENDING'; slug: string; sending: boolean }
   | { type: 'TOGGLE_ANNOUNCE' }
   | { type: 'OPEN_ANNOUNCE'; prefill: string; archetype_slug: string }
+  | { type: 'SET_DECISION'; slug: string; messageIndex: number; decision: 'adopted' | 'rejected' | 'modified'; modification?: string }
+  | { type: 'OPEN_ARTIFACT_PANE'; artifact: ArtifactMeta }
+  | { type: 'CLOSE_ARTIFACT_PANE'; artifactId: string }
+  | { type: 'SET_ACTIVE_ARTIFACT'; artifactId: string }
 
 function buildCeoState(slug: string, autonomyLevel: 1 | 2 | 3 | 4 = 1): CeoState {
   return { slug, history: [], autonomyLevel, activeJob: null, sending: false }
@@ -130,6 +138,37 @@ function reducer(state: AppState, action: AppAction): AppState {
         announcePrefill: action.prefill,
         announceArchetypeSlug: action.archetype_slug,
       }
+    case 'SET_DECISION': {
+      const ceo = state.ceos[action.slug]
+      if (!ceo) return state
+      const history = ceo.history.map((msg, i) =>
+        i === action.messageIndex
+          ? { ...msg, decision: action.decision, modification: action.modification }
+          : msg
+      )
+      return {
+        ...state,
+        ceos: { ...state.ceos, [action.slug]: { ...ceo, history } },
+      }
+    }
+    case 'OPEN_ARTIFACT_PANE': {
+      const alreadyOpen = state.openArtifacts.find(a => a.id === action.artifact.id)
+      return {
+        ...state,
+        openArtifacts: alreadyOpen ? state.openArtifacts : [...state.openArtifacts, action.artifact],
+        activeArtifactId: action.artifact.id,
+      }
+    }
+    case 'CLOSE_ARTIFACT_PANE': {
+      const remaining = state.openArtifacts.filter(a => a.id !== action.artifactId)
+      const newActive =
+        state.activeArtifactId === action.artifactId
+          ? (remaining[remaining.length - 1]?.id ?? null)
+          : state.activeArtifactId
+      return { ...state, openArtifacts: remaining, activeArtifactId: newActive }
+    }
+    case 'SET_ACTIVE_ARTIFACT':
+      return { ...state, activeArtifactId: action.artifactId }
     default:
       return state
   }
@@ -145,6 +184,8 @@ const initialState: AppState = {
   announceOpen: false,
   announcePrefill: '',
   announceArchetypeSlug: '',
+  openArtifacts: [],
+  activeArtifactId: null,
 }
 
 // ---- Component ----
@@ -197,7 +238,7 @@ export default function App() {
         />
       )}
 
-      {/* Artifact modal */}
+      {/* Artifact modal — fullscreen expand */}
       {artifactModal && (
         <ArtifactModal
           artifact={artifactModal}
@@ -206,17 +247,18 @@ export default function App() {
       )}
 
       {/* Top nav */}
-      <div className="flex items-center px-4 py-2 border-b border-[#2A2A44] bg-[#0A0A0F]">
+      <div className="flex items-center justify-center px-4 py-2 border-b border-[#2A2A44] bg-[#0A0A0F]">
         <h1 className="font-mono text-sm text-[#00F5FF] tracking-widest uppercase neon-cyan">
-          Executive in a Box
+          Executive in a Box 📦
         </h1>
       </div>
 
-      {/* CEO portrait strip */}
-      <CeoStrip
+      {/* CEO Hero Panel */}
+      <CeoHeroPanel
         archetypes={state.config.archetypes}
         ceos={state.ceos}
         activeCeoSlug={state.activeCeoSlug}
+        config={state.config}
         onSelectCeo={(slug) => dispatch({ type: 'SET_ACTIVE_CEO', slug })}
         onSetAutonomy={(slug, level) =>
           dispatch({ type: 'SET_AUTONOMY', slug, level })
@@ -225,11 +267,14 @@ export default function App() {
 
       {/* Three-pane layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left pane — artifact explorer */}
-        <ArtifactPanel
+        {/* Left pane — tabbed: artifacts / jobs / history */}
+        <LeftPanel
           artifacts={state.artifacts}
+          ceos={state.ceos}
           onRefresh={(artifacts) => dispatch({ type: 'SET_ARTIFACTS', artifacts })}
-          onOpen={(artifact) => setArtifactModal(artifact)}
+          onOpenArtifact={(artifact) =>
+            dispatch({ type: 'OPEN_ARTIFACT_PANE', artifact })
+          }
         />
 
         {/* Center pane — chat */}
@@ -254,6 +299,15 @@ export default function App() {
             onSendingChange={(s) =>
               dispatch({ type: 'SET_SENDING', slug: activeCeo.slug, sending: s })
             }
+            onDecision={(msgIndex, decision, modification) =>
+              dispatch({
+                type: 'SET_DECISION',
+                slug: activeCeo.slug,
+                messageIndex: msgIndex,
+                decision,
+                modification,
+              })
+            }
           />
         ) : (
           <div className="flex-1 flex items-center justify-center">
@@ -261,11 +315,16 @@ export default function App() {
           </div>
         )}
 
-        {/* Right pane — dashboard */}
-        <RightPanel
-          config={state.config}
-          activeCeoSlug={state.activeCeoSlug}
-        />
+        {/* Inline artifact pane — shown when artifacts are open */}
+        {state.openArtifacts.length > 0 && (
+          <ArtifactPane
+            openArtifacts={state.openArtifacts}
+            activeArtifactId={state.activeArtifactId}
+            onSetActive={(id) => dispatch({ type: 'SET_ACTIVE_ARTIFACT', artifactId: id })}
+            onClose={(id) => dispatch({ type: 'CLOSE_ARTIFACT_PANE', artifactId: id })}
+            onExpand={(artifact) => setArtifactModal(artifact)}
+          />
+        )}
       </div>
     </div>
   )

@@ -20,7 +20,7 @@ const EXECUTIZING_VERB: Record<string, string> = {
 // Portrait background colors per archetype
 const ARCHETYPE_COLORS: Record<string, string> = {
   operator:  '#FF2D78',
-  visionary: '#3D00CC',
+  visionary: '#8B5CF6',
   advocate:  '#7FFF00',
   analyst:   '#00F5FF',
 }

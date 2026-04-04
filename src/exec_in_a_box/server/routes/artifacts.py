@@ -70,6 +70,24 @@ class ArtifactCreate(BaseModel):
     content: str
 
 
+@router.post("/{session_id}/{filename}/reveal")
+def reveal_artifact(session_id: str, filename: str):
+    import platform
+    import subprocess
+
+    path = _artifacts_dir() / session_id / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.Popen(["open", "-R", str(path)])
+    elif system == "Linux":
+        subprocess.Popen(["xdg-open", str(path.parent)])
+    elif system == "Windows":
+        subprocess.Popen(["explorer", f"/select,{path}"])
+    return {"revealed": True}
+
+
 @router.post("")
 def create_artifact(body: ArtifactCreate):
     session_id = body.session_id or str(uuid.uuid4())

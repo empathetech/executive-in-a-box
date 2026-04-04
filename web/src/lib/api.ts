@@ -94,6 +94,9 @@ export const listArtifacts = () =>
 export const getArtifact = (sessionId: string, filename: string) =>
   request<ArtifactDetail>(`/artifacts/${sessionId}/${filename}`)
 
+export const revealArtifact = (sessionId: string, filename: string) =>
+  request<{ revealed: boolean }>(`/artifacts/${sessionId}/${filename}/reveal`, { method: 'POST' })
+
 export const createArtifact = (body: {
   session_id?: string
   filename: string

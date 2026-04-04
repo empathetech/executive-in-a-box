@@ -13,9 +13,10 @@ interface Props {
   response: SessionResponse
   activeCeoSlug: string
   onAnnounce: (prefillMessage: string, archetype_slug: string) => void
+  onDecision?: (decision: 'adopted' | 'rejected' | 'modified', modification?: string) => void
 }
 
-export function DecisionBar({ response, activeCeoSlug, onAnnounce }: Props) {
+export function DecisionBar({ response, activeCeoSlug, onAnnounce, onDecision }: Props) {
   const [showModifyInput, setShowModifyInput] = useState(false)
   const [modifyText, setModifyText] = useState('')
   const [logging, setLogging] = useState(false)
@@ -43,16 +44,17 @@ export function DecisionBar({ response, activeCeoSlug, onAnnounce }: Props) {
   }
 
   function handleAdopt() {
-    void logDecision('adopted')
+    void logDecision('adopted').then(() => onDecision?.('adopted'))
   }
 
   function handleReject() {
-    void logDecision('rejected')
+    void logDecision('rejected').then(() => onDecision?.('rejected'))
   }
 
   function handleModifyConfirm() {
     if (!modifyText.trim()) return
-    void logDecision('modified', modifyText.trim())
+    const mod = modifyText.trim()
+    void logDecision('modified', mod).then(() => onDecision?.('modified', mod))
     setShowModifyInput(false)
   }
 
