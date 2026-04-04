@@ -1,7 +1,8 @@
-import { useEffect, useReducer } from 'react'
+import { useEffect, useReducer, useState } from 'react'
 import type { ConfigResponse, Job, ArtifactMeta, SessionResponse } from './types/api'
 import { getConfig, listArtifacts } from './lib/api'
 import { ArtifactPanel } from './components/ArtifactPanel'
+import { ArtifactModal } from './components/ArtifactModal'
 import { ChatPanel } from './components/ChatPanel'
 import { RightPanel } from './components/RightPanel'
 import { CeoStrip } from './components/CeoStrip'
@@ -31,8 +32,6 @@ interface AppState {
   activeCeoSlug: string
   ceos: Record<string, CeoState>
   artifacts: ArtifactMeta[]
-  rightPane: 'dashboard' | 'artifact'
-  selectedArtifact: ArtifactMeta | null
   announceOpen: boolean
   announcePrefill: string
   announceArchetypeSlug: string
@@ -45,7 +44,6 @@ type AppAction =
   | { type: 'ADD_MESSAGE'; slug: string; message: ChatMessage }
   | { type: 'SET_JOB'; slug: string; job: Job | null }
   | { type: 'SET_ARTIFACTS'; artifacts: ArtifactMeta[] }
-  | { type: 'SET_RIGHT_PANE'; pane: 'dashboard' | 'artifact'; artifact?: ArtifactMeta }
   | { type: 'SET_AUTONOMY'; slug: string; level: 1 | 2 | 3 | 4 }
   | { type: 'SET_SENDING'; slug: string; sending: boolean }
   | { type: 'TOGGLE_ANNOUNCE' }
@@ -104,12 +102,6 @@ function reducer(state: AppState, action: AppAction): AppState {
     }
     case 'SET_ARTIFACTS':
       return { ...state, artifacts: action.artifacts }
-    case 'SET_RIGHT_PANE':
-      return {
-        ...state,
-        rightPane: action.pane,
-        selectedArtifact: action.artifact ?? state.selectedArtifact,
-      }
     case 'SET_AUTONOMY': {
       const ceo = state.ceos[action.slug]
       if (!ceo) return state
@@ -150,8 +142,6 @@ const initialState: AppState = {
   activeCeoSlug: '',
   ceos: {},
   artifacts: [],
-  rightPane: 'dashboard',
-  selectedArtifact: null,
   announceOpen: false,
   announcePrefill: '',
   announceArchetypeSlug: '',
@@ -161,6 +151,7 @@ const initialState: AppState = {
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState)
+  const [artifactModal, setArtifactModal] = useState<ArtifactMeta | null>(null)
 
   useEffect(() => {
     getConfig()
@@ -206,6 +197,14 @@ export default function App() {
         />
       )}
 
+      {/* Artifact modal */}
+      {artifactModal && (
+        <ArtifactModal
+          artifact={artifactModal}
+          onClose={() => setArtifactModal(null)}
+        />
+      )}
+
       {/* Top nav */}
       <div className="flex items-center px-4 py-2 border-b border-[#2A2A44] bg-[#0A0A0F]">
         <h1 className="font-mono text-sm text-[#00F5FF] tracking-widest uppercase neon-cyan">
@@ -230,9 +229,7 @@ export default function App() {
         <ArtifactPanel
           artifacts={state.artifacts}
           onRefresh={(artifacts) => dispatch({ type: 'SET_ARTIFACTS', artifacts })}
-          onOpen={(artifact) =>
-            dispatch({ type: 'SET_RIGHT_PANE', pane: 'artifact', artifact })
-          }
+          onOpen={(artifact) => setArtifactModal(artifact)}
         />
 
         {/* Center pane — chat */}
@@ -264,10 +261,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Right pane — dashboard or artifact viewer */}
+        {/* Right pane — dashboard */}
         <RightPanel
-          mode={state.rightPane}
-          artifact={state.selectedArtifact}
           config={state.config}
           activeCeoSlug={state.activeCeoSlug}
         />

@@ -8,13 +8,11 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { ArtifactMeta, ConfigResponse, Job, StatsResponse } from '../types/api'
-import { getArtifact, getStats, listJobs } from '../lib/api'
+import type { ConfigResponse, Job, StatsResponse } from '../types/api'
+import { getStats, listJobs } from '../lib/api'
 import { RadarChart } from './RadarChart'
 
 interface Props {
-  mode: 'dashboard' | 'artifact'
-  artifact: ArtifactMeta | null
   config: ConfigResponse
   activeCeoSlug: string
 }
@@ -264,46 +262,14 @@ function UsageDashboard({ config, activeCeoSlug }: { config: ConfigResponse; act
   )
 }
 
-// ---- Artifact Viewer ----
-
-function ArtifactViewer({ artifact }: { artifact: ArtifactMeta }) {
-  const [content, setContent] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    setLoading(true)
-    getArtifact(artifact.session_id, artifact.filename)
-      .then((r) => setContent(r.content))
-      .catch(() => setContent('Failed to load artifact.'))
-      .finally(() => setLoading(false))
-  }, [artifact.id])
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="font-mono text-xs text-[#00F5FF] tracking-widest uppercase truncate">
-          {artifact.filename}
-        </h2>
-      </div>
-      {loading ? (
-        <p className="text-[#8888AA] font-mono text-xs animate-pulse">Loading...</p>
-      ) : (
-        <pre className="flex-1 overflow-auto font-mono text-xs text-[#F0F0FF] whitespace-pre-wrap leading-relaxed">
-          {content}
-        </pre>
-      )}
-    </div>
-  )
-}
-
 // ---- Right Panel ----
 
-export function RightPanel({ mode, artifact, config, activeCeoSlug }: Props) {
+export function RightPanel({ config, activeCeoSlug }: Props) {
   return (
     <div
       className="w-72 flex-shrink-0 crt-panel border-l border-[#2A2A44] overflow-hidden"
       role="complementary"
-      aria-label={mode === 'dashboard' ? 'Usage dashboard' : 'Artifact viewer'}
+      aria-label="Usage dashboard"
     >
       {/* CRT header bar */}
       <div className="px-3 py-2 border-b border-[#2A2A44] flex items-center gap-2">
@@ -311,15 +277,11 @@ export function RightPanel({ mode, artifact, config, activeCeoSlug }: Props) {
         <div className="w-2 h-2 rounded-full bg-[#FFE600]" aria-hidden="true" />
         <div className="w-2 h-2 rounded-full bg-[#7FFF00]" aria-hidden="true" />
         <span className="ml-2 font-mono text-[10px] text-[#8888AA] tracking-widest">
-          {mode === 'dashboard' ? 'DASHBOARD' : 'ARTIFACT'}
+          DASHBOARD
         </span>
       </div>
 
-      {mode === 'artifact' && artifact ? (
-        <ArtifactViewer artifact={artifact} />
-      ) : (
-        <UsageDashboard config={config} activeCeoSlug={activeCeoSlug} />
-      )}
+      <UsageDashboard config={config} activeCeoSlug={activeCeoSlug} />
     </div>
   )
 }
