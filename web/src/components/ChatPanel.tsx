@@ -19,6 +19,7 @@ interface Props {
   onJobChange: (job: Job | null) => void
   onArtifactCreated?: () => void
   onAnnounce: (prefillMessage: string, archetype_slug: string) => void
+  onSendingChange: (sending: boolean) => void
 }
 
 const ARCHETYPE_COLORS: Record<string, string> = {
@@ -72,10 +73,10 @@ function MessageBubble({ msg, accentColor }: { msg: ChatMessage; accentColor: st
   )
 }
 
-export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreated, onAnnounce }: Props) {
+export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreated, onAnnounce, onSendingChange }: Props) {
   const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sending = ceo.sending
   const [toast, setToast] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const accentColor = ARCHETYPE_COLORS[ceo.slug] ?? '#00F5FF'
@@ -136,7 +137,7 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
 
     setInput('')
     setError(null)
-    setSending(true)
+    onSendingChange(true)
 
     onMessage({
       role: 'user',
@@ -174,7 +175,7 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
-      setSending(false)
+      onSendingChange(false)
     }
   }
 
@@ -199,7 +200,7 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
           </div>
         )}
         {ceo.history.map((msg, i) => (
-          <div key={i}>
+          <div key={i} className="mb-2">
             <MessageBubble msg={msg} accentColor={accentColor} />
             {msg.response && (
               <DecisionBar

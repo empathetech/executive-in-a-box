@@ -21,6 +21,7 @@ export interface CeoState {
   history: ChatMessage[]
   autonomyLevel: 1 | 2 | 3 | 4
   activeJob: Job | null
+  sending: boolean
 }
 
 interface AppState {
@@ -46,11 +47,12 @@ type AppAction =
   | { type: 'SET_ARTIFACTS'; artifacts: ArtifactMeta[] }
   | { type: 'SET_RIGHT_PANE'; pane: 'dashboard' | 'artifact'; artifact?: ArtifactMeta }
   | { type: 'SET_AUTONOMY'; slug: string; level: 1 | 2 | 3 | 4 }
+  | { type: 'SET_SENDING'; slug: string; sending: boolean }
   | { type: 'TOGGLE_ANNOUNCE' }
   | { type: 'OPEN_ANNOUNCE'; prefill: string; archetype_slug: string }
 
 function buildCeoState(slug: string, autonomyLevel: 1 | 2 | 3 | 4 = 1): CeoState {
-  return { slug, history: [], autonomyLevel, activeJob: null }
+  return { slug, history: [], autonomyLevel, activeJob: null, sending: false }
 }
 
 function reducer(state: AppState, action: AppAction): AppState {
@@ -117,6 +119,14 @@ function reducer(state: AppState, action: AppAction): AppState {
           ...state.ceos,
           [action.slug]: { ...ceo, autonomyLevel: action.level },
         },
+      }
+    }
+    case 'SET_SENDING': {
+      const ceo = state.ceos[action.slug]
+      if (!ceo) return state
+      return {
+        ...state,
+        ceos: { ...state.ceos, [action.slug]: { ...ceo, sending: action.sending } },
       }
     }
     case 'TOGGLE_ANNOUNCE':
@@ -243,6 +253,9 @@ export default function App() {
             }
             onAnnounce={(prefill, archetype_slug) =>
               dispatch({ type: 'OPEN_ANNOUNCE', prefill, archetype_slug })
+            }
+            onSendingChange={(s) =>
+              dispatch({ type: 'SET_SENDING', slug: activeCeo.slug, sending: s })
             }
           />
         ) : (
