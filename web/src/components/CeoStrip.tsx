@@ -71,16 +71,20 @@ export function CeoStrip({ archetypes, ceos, activeCeoSlug, onSelectCeo, onSetAu
             aria-selected={isActive}
             aria-label={`${archetype.name} — ${archetype.response_style_blurb}`}
           >
-            {/* Portrait circle */}
+            {/* Portrait image */}
             <div
               className={[
-                'w-12 h-12 rounded-full flex items-center justify-center font-mono font-bold text-lg transition-opacity',
+                'w-12 h-12 rounded-full overflow-hidden flex-shrink-0 transition-opacity',
                 isExecutizing ? 'opacity-40' : 'opacity-100',
               ].join(' ')}
-              style={{ background: `${color}33`, border: `2px solid ${color}` }}
+              style={{ border: `2px solid ${color}` }}
               aria-hidden="true"
             >
-              <span style={{ color }}>{archetype.name[4] ?? archetype.slug[0].toUpperCase()}</span>
+              <img
+                src={`/ceo-${archetype.slug}.png`}
+                alt={archetype.name}
+                className="w-full h-full object-cover"
+              />
             </div>
 
             {/* Name / Executizing state */}

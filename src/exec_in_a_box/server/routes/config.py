@@ -16,7 +16,7 @@ from exec_in_a_box import storage
 from exec_in_a_box.archetypes import list_archetypes
 from exec_in_a_box.config import load_config, save_autonomy_level
 from exec_in_a_box.credentials import get_api_key
-from exec_in_a_box.slack import get_webhook_url
+from exec_in_a_box.slack import list_webhooks
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -28,7 +28,7 @@ def get_config():
         raise HTTPException(status_code=404, detail="Not configured. Run setup first.")
 
     api_key = get_api_key(config.provider_name)
-    webhook = get_webhook_url()
+    webhooks = list_webhooks()
 
     archetypes = [
         {
@@ -47,7 +47,7 @@ def get_config():
         "provider_name": config.provider_name,
         "autonomy_level": config.autonomy_level,
         "api_key_set": api_key is not None,
-        "slack_configured": webhook is not None,
+        "slack_configured": len(webhooks) > 0,
         "archetypes": archetypes,
     }
 
