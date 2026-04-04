@@ -16,6 +16,7 @@ interface Props {
   mode: 'dashboard' | 'artifact'
   artifact: ArtifactMeta | null
   config: ConfigResponse
+  activeCeoSlug: string
 }
 
 // ---- Jobs Tab ----
@@ -84,7 +85,7 @@ function JobStatusBadge({ status }: { status: Job['status'] }) {
 
 // ---- CEO Stats Tab ----
 
-function StatsTab({ config }: { config: ConfigResponse }) {
+function StatsTab({ config, activeCeoSlug }: { config: ConfigResponse; activeCeoSlug: string }) {
   const [data, setData] = useState<StatsResponse | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
 
@@ -104,12 +105,14 @@ function StatsTab({ config }: { config: ConfigResponse }) {
   return (
     <div className="flex flex-col gap-4 p-3 h-full overflow-y-auto">
 
-      {/* Personality radar — always visible, uses static archetype traits */}
+      {/* Personality radar — shows only the active CEO */}
       <div>
         <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase mb-2">
-          Personality Profiles
+          Personality Profile
         </p>
-        <RadarChart archetypes={config.archetypes} />
+        <RadarChart
+          archetypes={config.archetypes.filter((a) => a.slug === activeCeoSlug)}
+        />
       </div>
 
       {/* Session-derived stats — only shown if there's history */}
@@ -211,7 +214,7 @@ function StatsTab({ config }: { config: ConfigResponse }) {
 
 type DashTab = 'jobs' | 'stats'
 
-function UsageDashboard({ config }: { config: ConfigResponse }) {
+function UsageDashboard({ config, activeCeoSlug }: { config: ConfigResponse; activeCeoSlug: string }) {
   const [tab, setTab] = useState<DashTab>('jobs')
 
   return (
@@ -255,7 +258,7 @@ function UsageDashboard({ config }: { config: ConfigResponse }) {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {tab === 'jobs' ? <JobsTab /> : <StatsTab config={config} />}
+        {tab === 'jobs' ? <JobsTab /> : <StatsTab config={config} activeCeoSlug={activeCeoSlug} />}
       </div>
     </div>
   )
@@ -295,7 +298,7 @@ function ArtifactViewer({ artifact }: { artifact: ArtifactMeta }) {
 
 // ---- Right Panel ----
 
-export function RightPanel({ mode, artifact, config }: Props) {
+export function RightPanel({ mode, artifact, config, activeCeoSlug }: Props) {
   return (
     <div
       className="w-72 flex-shrink-0 crt-panel border-l border-[#2A2A44] overflow-hidden"
@@ -315,7 +318,7 @@ export function RightPanel({ mode, artifact, config }: Props) {
       {mode === 'artifact' && artifact ? (
         <ArtifactViewer artifact={artifact} />
       ) : (
-        <UsageDashboard config={config} />
+        <UsageDashboard config={config} activeCeoSlug={activeCeoSlug} />
       )}
     </div>
   )

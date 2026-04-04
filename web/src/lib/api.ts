@@ -12,6 +12,7 @@ import type {
   Job,
   MessageRequest,
   SessionResponse,
+  SlackChannel,
   StatsResponse,
 } from '../types/api'
 
@@ -109,8 +110,27 @@ export const getStats = () => request<StatsResponse>('/stats')
 
 // ---- Slack ----
 
+export const getSlackChannels = () =>
+  request<{ channels: SlackChannel[] }>('/slack/channels').then((r) => r.channels)
+
 export const sendSlack = (body: AnnounceRequest) =>
   request<{ sent: boolean }>('/slack/announce', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+// ---- Decisions ----
+
+export const sendDecision = (body: {
+  archetype_slug: string
+  question: string
+  position: string
+  confidence: string
+  ambition_level: string
+  decision: string
+  modification?: string
+}) =>
+  request<{ recorded: boolean }>('/session/decision', {
     method: 'POST',
     body: JSON.stringify(body),
   })

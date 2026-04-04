@@ -68,6 +68,15 @@ async def _run_llm(archetype_slug: str, message: str) -> dict:
             "secret_warnings": len(secret_matches),
         }
 
+    # Save artifact server-side if the LLM produced one
+    artifact = result.artifact
+    if artifact:
+        from datetime import date
+        from exec_in_a_box import storage as _storage
+        session_id = date.today().isoformat()
+        rel_path = f"artifacts/{session_id}/{artifact['filename']}"
+        _storage.write_file(rel_path, artifact["content"])
+
     return {
         "valid": True,
         "archetype": result.archetype,
@@ -79,6 +88,7 @@ async def _run_llm(archetype_slug: str, message: str) -> dict:
         "cons": result.cons,
         "flags": result.flags,
         "questions_for_user": result.questions_for_user,
+        "artifact": artifact,
         "model": response.model,
         "input_tokens": response.input_tokens,
         "output_tokens": response.output_tokens,
@@ -114,3 +124,67 @@ async def post_message(body: MessageRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except ProviderError as e:
         raise HTTPException(status_code=502, detail=e.user_message)
+
+
+class DecisionRequest(BaseModel):
+    archetype_slug: str
+    question: str
+    position: str
+    confidence: str = ""
+    ambition_level: str = ""
+    decision: str  # "adopted" | "rejected" | "modified"
+    modification: str | None = None
+
+
+@router.post("/decision")
+def post_decision(body: DecisionRequest):
+    from datetime import datetime
+    from exec_in_a_box import storage
+    from exec_in_a_box.archetypes import get_archetype as _get_archetype
+
+    arch = _get_archetype(body.archetype_slug)
+    archetype_name = arch.name if arch else body.archetype_slug
+
+    # Normalise decision text
+    decision_map = {
+        "adopted": "Adopted",
+        "rejected": "Rejected",
+        "modified": "Modified",
+    }
+    decision_text = decision_map.get(body.decision.lower(), body.decision.capitalize())
+
+    now = datetime.now()
+    timestamp = now.isoformat(timespec="seconds")
+
+    # Build markdown entry
+    lines = [
+        f"## {timestamp}",
+        "",
+        f"**Question:** {body.question}",
+        "",
+        f"**Advisor:** {archetype_name} (confidence: {body.confidence})",
+        "",
+        f"**Position:** {body.position}",
+        "",
+        f"**Decision:** {decision_text}",
+    ]
+    if body.modification:
+        lines += ["", f"**Modification:** {body.modification}"]
+    lines += ["", "---", ""]
+
+    storage.append_file("org/decisions.md", "\n".join(lines))
+
+    # Append to session index
+    entry_id = f"web-{now.strftime('%Y%m%d-%H%M%S')}"
+    storage.append_session_index({
+        "id": entry_id,
+        "slug": body.archetype_slug,
+        "timestamp": timestamp,
+        "decision": decision_text,
+        "question": body.question,
+        "position": body.position,
+        "confidence": body.confidence,
+        "ambition_level": body.ambition_level,
+    })
+
+    return {"recorded": True, "decision": decision_text}

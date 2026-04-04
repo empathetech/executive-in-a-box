@@ -66,9 +66,10 @@ export function CeoStrip({ archetypes, ceos, activeCeoSlug, onSelectCeo, onSetAu
             ].join(' ')}
             style={isActive ? { borderColor: color } : undefined}
             onClick={() => onSelectCeo(archetype.slug)}
+            title={archetype.response_style_blurb}
             role="tab"
             aria-selected={isActive}
-            aria-label={archetype.name}
+            aria-label={`${archetype.name} — ${archetype.response_style_blurb}`}
           >
             {/* Portrait circle */}
             <div
@@ -102,6 +103,16 @@ export function CeoStrip({ archetypes, ceos, activeCeoSlug, onSelectCeo, onSetAu
                 </p>
               )}
             </div>
+
+            {/* Response style blurb — only shown for active CEO */}
+            {isActive && (
+              <p
+                className="font-mono text-[9px] text-center leading-tight max-w-[140px]"
+                style={{ color: `${color}99` }}
+              >
+                {archetype.response_style_blurb}
+              </p>
+            )}
 
             {/* Autonomy toggles — only shown for active CEO */}
             {isActive && ceo && (

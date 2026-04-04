@@ -10,12 +10,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { ConfigResponse, Job, SessionResponse } from '../types/api'
 import type { CeoState, ChatMessage } from '../App'
 import { sendMessage, subscribeToJob, getJob } from '../lib/api'
+import { DecisionBar } from './DecisionBar'
 
 interface Props {
   ceo: CeoState
   config: ConfigResponse
   onMessage: (msg: ChatMessage) => void
   onJobChange: (job: Job | null) => void
+  onArtifactCreated?: () => void
+  onAnnounce: (prefillMessage: string, archetype_slug: string) => void
 }
 
 const ARCHETYPE_COLORS: Record<string, string> = {
@@ -69,7 +72,7 @@ function MessageBubble({ msg, accentColor }: { msg: ChatMessage; accentColor: st
   )
 }
 
-export function ChatPanel({ ceo, config, onMessage, onJobChange }: Props) {
+export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreated, onAnnounce }: Props) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -149,7 +152,6 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange }: Props) {
       })
 
       if (executize && result.job_id) {
-        // Job dispatched — fetch initial state and set it
         const job = await getJob(result.job_id)
         onJobChange(job)
         onMessage({
@@ -165,6 +167,9 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange }: Props) {
           response: result,
           timestamp: new Date().toISOString(),
         })
+        if (result.artifact) {
+          onArtifactCreated?.()
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.')
@@ -194,7 +199,16 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange }: Props) {
           </div>
         )}
         {ceo.history.map((msg, i) => (
-          <MessageBubble key={i} msg={msg} accentColor={accentColor} />
+          <div key={i}>
+            <MessageBubble msg={msg} accentColor={accentColor} />
+            {msg.response && (
+              <DecisionBar
+                response={msg.response}
+                activeCeoSlug={ceo.slug}
+                onAnnounce={onAnnounce}
+              />
+            )}
+          </div>
         ))}
         {(sending || isExecutizing) && (
           <div className="flex justify-start mb-4">

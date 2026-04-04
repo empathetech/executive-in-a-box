@@ -235,6 +235,7 @@ class ValidatedResponse:
     cons: list[str]
     flags: list[str]
     questions_for_user: list[str]
+    artifact: dict | None = None  # {"filename": str, "content": str} or None
     raw_json: dict = field(default_factory=dict)
 
 
@@ -317,6 +318,28 @@ def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError
     if errors:
         return errors
 
+    # Validate optional artifact field
+    artifact = data.get("artifact")
+    if artifact is not None:
+        if not isinstance(artifact, dict):
+            errors.append(ValidationError("artifact", "Must be an object or null"))
+        else:
+            if not isinstance(artifact.get("filename"), str) or not artifact["filename"].strip():
+                errors.append(ValidationError("artifact.filename", "Must be a non-empty string"))
+            if not isinstance(artifact.get("content"), str) or not artifact["content"].strip():
+                errors.append(ValidationError("artifact.content", "Must be a non-empty string"))
+            if not errors:
+                # Sanitize filename: strip path components, keep only safe chars
+                import re as _re
+                safe = _re.sub(r"[^\w\-.]", "-", artifact["filename"].strip())
+                safe = _re.sub(r"-+", "-", safe).strip("-")
+                if not safe:
+                    safe = "artifact.md"
+                artifact = {"filename": safe, "content": artifact["content"]}
+
+    if errors:
+        return errors
+
     return ValidatedResponse(
         archetype=data["archetype"],
         position=data["position"],
@@ -327,5 +350,6 @@ def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError
         cons=data["cons"],
         flags=data["flags"],
         questions_for_user=data["questions_for_user"],
+        artifact=artifact,
         raw_json=data,
     )

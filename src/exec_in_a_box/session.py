@@ -491,6 +491,20 @@ def run_session(initial_slug: Optional[str] = None) -> None:
 
         print_response(result, effective_level, archetype.name)
 
+        # Save artifact if the LLM produced one
+        if result.artifact:
+            from datetime import date
+            session_id = date.today().isoformat()
+            filename = result.artifact["filename"]
+            rel_path = f"artifacts/{session_id}/{filename}"
+            storage.write_file(rel_path, result.artifact["content"])
+            print(
+                colorize(f"\n  Artifact saved: ", C.DIM)
+                + colorize(filename, C.CYAN)
+                + colorize(f"  (~/.executive-in-a-box/{rel_path})", C.DIM)
+            )
+
+
         from exec_in_a_box.slack import get_webhook_url
         has_slack = get_webhook_url() is not None
 

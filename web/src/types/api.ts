@@ -9,7 +9,8 @@ export interface ArchetypeInfo {
   slug: string
   name: string
   one_line: string
-  traits: Record<string, number>  // personality trait scores, 0.0–1.0
+  traits: Record<string, number>       // personality trait scores, 0.0–1.0
+  response_style_blurb: string         // short UI description of output style
 }
 
 export interface ConfigResponse {
@@ -45,6 +46,7 @@ export interface SessionResponse {
   input_tokens: number
   output_tokens: number
   secret_warnings: number
+  artifact?: { filename: string; content: string } | null
   // Populated when executize=true
   job_id?: string
   status?: 'queued' | 'running' | 'complete' | 'failed'
@@ -81,8 +83,15 @@ export interface ArtifactDetail extends ArtifactMeta {
 
 // ---- Slack ----
 
+export interface SlackChannel {
+  id: string
+  workspace: string
+  channel: string
+}
+
 export interface AnnounceRequest {
   message: string
+  webhook_id: string
   archetype_slug?: string
 }
 

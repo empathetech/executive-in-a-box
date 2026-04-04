@@ -25,7 +25,17 @@ outside the JSON object. Do not wrap it in markdown code fences.
   "pros": ["string", "..."],
   "cons": ["string", "..."],
   "flags": ["string (any contradictions, risks, or uncertainties worth surfacing)", "..."],
-  "questions_for_user": ["string (things you need the user to clarify)", "..."]
+  "questions_for_user": ["string (things you need the user to clarify)", "..."],
+  "artifact": null
+}
+
+The "artifact" field is optional. Set it to null unless the user explicitly \
+asks you to produce a document, or your response clearly warrants one \
+(e.g. a strategy memo, action plan, draft proposal, analysis report). \
+When producing an artifact, replace null with:
+{
+  "filename": "short-kebab-case-name.md",
+  "content": "full document content in markdown"
 }"""
 
 # Hard guardrails injected into every archetype prompt.
@@ -61,13 +71,22 @@ class Archetype:
     reasoning_style: str
     # Personality trait scores (0.0–1.0), keyed by TRAIT_LABELS entries.
     traits: dict[str, float]
+    # How this archetype structures its written output (injected into the prompt).
+    formatting_directive: str = ""
+    # Short UI blurb describing what kind of responses to expect.
+    response_style_blurb: str = ""
 
     def build_system_prompt(self, org_context: str) -> str:
         """Assemble the full system prompt for this archetype.
 
         The prompt structure follows the contract in BUSINESS_LOGIC.md:
-        role → org context → reasoning style → output format → hard guardrails
+        role → org context → reasoning style → response format → output schema → hard guardrails
         """
+        formatting_section = (
+            f"\nRESPONSE FORMAT:\n{self.formatting_directive}\n"
+            if self.formatting_directive
+            else ""
+        )
         return f"""\
 ROLE:
 {self.role_definition}
@@ -77,7 +96,7 @@ ORG CONTEXT:
 
 REASONING STYLE:
 {self.reasoning_style}
-
+{formatting_section}
 OUTPUT FORMAT:
 {OUTPUT_FORMAT_DIRECTIVE}
 
@@ -105,13 +124,22 @@ OPERATOR = Archetype(
         "or overcommitting. Break big plans into concrete next steps."
     ),
     traits={
-        "Risk Appetite":     0.25,  # risk-aware, prefers safe bets
-        "People Focus":      0.40,  # cares about capacity, not equity-first
-        "Long-term Horizon": 0.30,  # execution-now over 2-year vision
-        "Innovation Drive":  0.25,  # favors simplest path, not disruption
-        "Data Reliance":     0.55,  # operational data: timelines, cost, capacity
-        "Decisiveness":      0.85,  # breaks plans into concrete next steps
+        "Risk Appetite":     0.25,
+        "People Focus":      0.40,
+        "Long-term Horizon": 0.30,
+        "Innovation Drive":  0.25,
+        "Data Reliance":     0.55,
+        "Decisiveness":      0.85,
     },
+    formatting_directive=(
+        "Structure your position as a numbered action list — not prose. "
+        "Each item should be a concrete, executable step. "
+        "Use inline labels to signal priority: 'Immediate:', 'This week:', 'Dependency:', 'Risk:'. "
+        "Keep each item to one sentence. "
+        "End your position with a single 'First action:' line — the one thing to do today. "
+        "In your reasoning, use short paragraphs. Lead with constraints and costs before benefits."
+    ),
+    response_style_blurb="Numbered steps and action lists. Prioritizes what can ship now.",
 )
 
 VISIONARY = Archetype(
@@ -132,13 +160,22 @@ VISIONARY = Archetype(
         "your reasoning so the user can evaluate the risk themselves."
     ),
     traits={
-        "Risk Appetite":     0.85,  # comfortable with calculated risk
-        "People Focus":      0.25,  # opportunity-first, not people-first
-        "Long-term Horizon": 0.90,  # 2-year horizon, works backward from future
-        "Innovation Drive":  0.90,  # challenges incrementalism, reframes questions
-        "Data Reliance":     0.30,  # vision and intuition over evidence
-        "Decisiveness":      0.75,  # bold commitments, but shows reasoning
+        "Risk Appetite":     0.85,
+        "People Focus":      0.25,
+        "Long-term Horizon": 0.90,
+        "Innovation Drive":  0.90,
+        "Data Reliance":     0.30,
+        "Decisiveness":      0.75,
     },
+    formatting_directive=(
+        "Open your position by reframing the question — show the bigger opportunity the user might be missing. "
+        "Use a bold central thesis as your first sentence, then build the case in narrative prose. "
+        "Structure your reasoning with labelled sections: 'The real opportunity:', 'Two years from now:', 'The bold move:'. "
+        "End your position with a 'What if:' challenge that pushes the user to think bigger. "
+        "Do not use bullet lists in your position — write in flowing sentences. "
+        "In your reasoning, contrast the safe path against the bold path explicitly."
+    ),
+    response_style_blurb="Reframes your question with a 2-year lens. Narrative and ambitious.",
 )
 
 ADVOCATE = Archetype(
@@ -161,13 +198,22 @@ ADVOCATE = Archetype(
         "the org's stated values, say so clearly."
     ),
     traits={
-        "Risk Appetite":     0.35,  # cautious about harm, not about change
-        "People Focus":      0.95,  # the defining trait: people always come first
-        "Long-term Horizon": 0.60,  # sustainable over short-term gains
-        "Innovation Drive":  0.45,  # open to change if it serves people
-        "Data Reliance":     0.25,  # values and lived experience over metrics
-        "Decisiveness":      0.55,  # will say no clearly, but deliberates on tradeoffs
+        "Risk Appetite":     0.35,
+        "People Focus":      0.95,
+        "Long-term Horizon": 0.60,
+        "Innovation Drive":  0.45,
+        "Data Reliance":     0.25,
+        "Decisiveness":      0.55,
     },
+    formatting_directive=(
+        "Open your position with 'Who this affects:' — name the specific people impacted before anything else. "
+        "Structure your position around two labelled sections: 'Who benefits:' and 'Who bears the cost:'. "
+        "Name the human cost in plain language — do not hide it behind business abstractions. "
+        "If this recommendation contradicts the org's stated values, flag it with 'Values conflict:' as a standalone line. "
+        "End your position with 'Human cost to consider:' — one sentence on what gets lost if this goes wrong. "
+        "In your reasoning, start with impact on people, then address operational concerns."
+    ),
+    response_style_blurb="Who benefits, who bears the cost. Human impact before business logic.",
 )
 
 ANALYST = Archetype(
@@ -188,13 +234,22 @@ ANALYST = Archetype(
         "you know. If the user is about to make a big bet on thin evidence, say so."
     ),
     traits={
-        "Risk Appetite":     0.20,  # "cheap experiments over expensive commitments"
-        "People Focus":      0.30,  # evidence-first, not people-first
-        "Long-term Horizon": 0.45,  # depends on data, neither short nor long by default
-        "Innovation Drive":  0.30,  # validates before disrupting
-        "Data Reliance":     0.95,  # the defining trait: evidence over everything
-        "Decisiveness":      0.35,  # will say "we don't know enough" explicitly
+        "Risk Appetite":     0.20,
+        "People Focus":      0.30,
+        "Long-term Horizon": 0.45,
+        "Innovation Drive":  0.30,
+        "Data Reliance":     0.95,
+        "Decisiveness":      0.35,
     },
+    formatting_directive=(
+        "Open your position with 'What we know:' vs 'What we're assuming:' — be explicit about the difference. "
+        "Use inline confidence labels throughout: (high confidence), (medium confidence), (assumption). "
+        "If the evidence is thin, lead with the cheapest experiment that would resolve the uncertainty before recommending action. "
+        "Structure your reasoning with labelled sections: 'Evidence:', 'Key assumptions:', 'Recommended experiment:'. "
+        "End your position with 'What would change this analysis:' — name the specific data or event that would shift your recommendation. "
+        "Quantify wherever possible: time, cost, probability, magnitude. If you can't quantify, say why."
+    ),
+    response_style_blurb="Evidence vs. assumption labels. Recommends experiments before bets.",
 )
 
 # All built-in archetypes, indexed by slug

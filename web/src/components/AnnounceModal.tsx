@@ -6,32 +6,73 @@
  * Reference: hacky-hours/02-design/BUSINESS_LOGIC.md § Slack Announce Flow
  */
 
-import { useState } from 'react'
-import type { ArchetypeInfo } from '../types/api'
-import { sendSlack } from '../lib/api'
+import { useEffect, useState } from 'react'
+import type { SlackChannel } from '../types/api'
+import { getSlackChannels, sendSlack } from '../lib/api'
 
 interface Props {
-  archetypes: ArchetypeInfo[]
   activeCeoSlug: string
+  prefillMessage?: string
   onClose: () => void
 }
 
-export function AnnounceModal({ archetypes, activeCeoSlug, onClose }: Props) {
-  const [message, setMessage] = useState('')
-  const [selectedSlug, setSelectedSlug] = useState(activeCeoSlug)
+export function AnnounceModal({ activeCeoSlug, prefillMessage, onClose }: Props) {
+  const [message, setMessage] = useState(prefillMessage ?? '')
+  const [channels, setChannels] = useState<SlackChannel[]>([])
+  const [channelsLoading, setChannelsLoading] = useState(true)
+  const [selectedWorkspace, setSelectedWorkspace] = useState('')
+  const [selectedChannelId, setSelectedChannelId] = useState('')
   const [previewed, setPreviewed] = useState(false)
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const selectedArchetype = archetypes.find((a) => a.slug === selectedSlug)
+  // Sync message when prefill changes (e.g. opened from a different DecisionBar)
+  useEffect(() => {
+    setMessage(prefillMessage ?? '')
+    setPreviewed(false)
+  }, [prefillMessage])
+
+  // Fetch channels on mount
+  useEffect(() => {
+    setChannelsLoading(true)
+    getSlackChannels()
+      .then((ch) => {
+        setChannels(ch)
+        if (ch.length > 0) {
+          setSelectedWorkspace(ch[0].workspace)
+          setSelectedChannelId(ch[0].id)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setChannelsLoading(false))
+  }, [])
+
+  // When workspace changes, select first channel in that workspace
+  function handleWorkspaceChange(ws: string) {
+    setSelectedWorkspace(ws)
+    const first = channels.find((c) => c.workspace === ws)
+    setSelectedChannelId(first?.id ?? '')
+    setPreviewed(false)
+  }
+
+  // Unique workspaces in order
+  const workspaces = Array.from(new LinkedSet(channels.map((c) => c.workspace)))
+
+  // Channels filtered by selected workspace
+  const filteredChannels = channels.filter((c) => c.workspace === selectedWorkspace)
+  const selectedChannel = channels.find((c) => c.id === selectedChannelId)
 
   async function handleSend() {
-    if (!previewed || !message.trim() || sending) return
+    if (!previewed || !message.trim() || !selectedChannelId || sending) return
     setSending(true)
     setError(null)
     try {
-      await sendSlack({ message, archetype_slug: selectedSlug })
+      await sendSlack({
+        message,
+        webhook_id: selectedChannelId,
+        archetype_slug: activeCeoSlug,
+      })
       setSent(true)
       setTimeout(onClose, 1500)
     } catch (e) {
@@ -40,6 +81,8 @@ export function AnnounceModal({ archetypes, activeCeoSlug, onClose }: Props) {
       setSending(false)
     }
   }
+
+  const noChannels = !channelsLoading && channels.length === 0
 
   return (
     <div
@@ -65,22 +108,58 @@ export function AnnounceModal({ archetypes, activeCeoSlug, onClose }: Props) {
 
         {/* Body */}
         <div className="p-4 space-y-4">
-          {/* Archetype selector */}
-          <div>
-            <label className="block font-mono text-xs text-[#8888AA] mb-1" htmlFor="announce-ceo">
-              Post as
-            </label>
-            <select
-              id="announce-ceo"
-              value={selectedSlug}
-              onChange={(e) => { setSelectedSlug(e.target.value); setPreviewed(false) }}
-              className="w-full bg-[#0A0A0F] border border-[#2A2A44] rounded px-3 py-2 font-mono text-sm text-[#F0F0FF] focus:outline-none focus:border-[#00F5FF]"
+          {noChannels ? (
+            <div
+              className="border border-[#2A2A44] rounded p-3 bg-[#1A1A2E] font-mono text-xs text-[#8888AA] whitespace-pre-line"
+              role="status"
             >
-              {archetypes.map((a) => (
-                <option key={a.slug} value={a.slug}>{a.name}</option>
-              ))}
-            </select>
-          </div>
+              No Slack webhooks configured.{'\n'}Run: exec-in-a-box slack setup
+            </div>
+          ) : (
+            <>
+              {/* Workspace selector */}
+              <div>
+                <label
+                  className="block font-mono text-xs text-[#8888AA] mb-1"
+                  htmlFor="announce-workspace"
+                >
+                  Workspace
+                </label>
+                <select
+                  id="announce-workspace"
+                  value={selectedWorkspace}
+                  onChange={(e) => handleWorkspaceChange(e.target.value)}
+                  disabled={channelsLoading}
+                  className="w-full bg-[#0A0A0F] border border-[#2A2A44] rounded px-3 py-2 font-mono text-sm text-[#F0F0FF] focus:outline-none focus:border-[#00F5FF] disabled:opacity-50"
+                >
+                  {workspaces.map((ws) => (
+                    <option key={ws} value={ws}>{ws}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Channel selector */}
+              <div>
+                <label
+                  className="block font-mono text-xs text-[#8888AA] mb-1"
+                  htmlFor="announce-channel"
+                >
+                  Channel
+                </label>
+                <select
+                  id="announce-channel"
+                  value={selectedChannelId}
+                  onChange={(e) => { setSelectedChannelId(e.target.value); setPreviewed(false) }}
+                  disabled={channelsLoading}
+                  className="w-full bg-[#0A0A0F] border border-[#2A2A44] rounded px-3 py-2 font-mono text-sm text-[#F0F0FF] focus:outline-none focus:border-[#00F5FF] disabled:opacity-50"
+                >
+                  {filteredChannels.map((c) => (
+                    <option key={c.id} value={c.id}>{c.channel}</option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
 
           {/* Message textarea */}
           <div>
@@ -114,11 +193,11 @@ export function AnnounceModal({ archetypes, activeCeoSlug, onClose }: Props) {
                   style={{ background: '#1A1A2E', border: '1px solid #2A2A44', color: '#F0F0FF' }}
                   aria-hidden="true"
                 >
-                  {selectedArchetype?.name[4] ?? '?'}
+                  {(selectedChannel?.channel ?? '#')[1]?.toUpperCase() ?? '?'}
                 </div>
                 <div>
                   <p className="font-mono text-xs font-bold text-[#F0F0FF]">
-                    {selectedArchetype?.name ?? 'CEO'}
+                    {selectedChannel ? `${selectedChannel.workspace} / ${selectedChannel.channel}` : 'Slack'}
                   </p>
                   <p className="font-mono text-xs text-[#F0F0FF] whitespace-pre-wrap leading-relaxed">
                     {message}
@@ -141,10 +220,10 @@ export function AnnounceModal({ archetypes, activeCeoSlug, onClose }: Props) {
         <div className="flex gap-2 justify-end px-4 py-3 border-t border-[#2A2A44]">
           <button
             onClick={() => setPreviewed(true)}
-            disabled={!message.trim()}
+            disabled={!message.trim() || noChannels}
             className={[
               'px-4 py-2 font-mono text-xs rounded border transition-all',
-              !message.trim()
+              !message.trim() || noChannels
                 ? 'opacity-30 cursor-not-allowed border-[#2A2A44] text-[#8888AA]'
                 : 'border-[#2A2A44] text-[#F0F0FF] hover:border-[#00F5FF] hover:text-[#00F5FF]',
             ].join(' ')}
@@ -153,15 +232,15 @@ export function AnnounceModal({ archetypes, activeCeoSlug, onClose }: Props) {
           </button>
           <button
             onClick={() => void handleSend()}
-            disabled={!previewed || !message.trim() || sending || sent}
+            disabled={!previewed || !message.trim() || !selectedChannelId || sending || sent || noChannels}
             className={[
               'px-4 py-2 font-mono text-xs rounded border transition-all',
-              !previewed || !message.trim() || sending || sent
+              !previewed || !message.trim() || !selectedChannelId || sending || sent || noChannels
                 ? 'opacity-30 cursor-not-allowed border-[#2A2A44] text-[#8888AA]'
                 : 'border-[#7FFF00] text-[#7FFF00] hover:shadow-lg',
             ].join(' ')}
             style={
-              previewed && message.trim() && !sending && !sent
+              previewed && message.trim() && selectedChannelId && !sending && !sent && !noChannels
                 ? { boxShadow: '0 0 8px #7FFF0044' }
                 : undefined
             }
@@ -172,4 +251,14 @@ export function AnnounceModal({ archetypes, activeCeoSlug, onClose }: Props) {
       </div>
     </div>
   )
+}
+
+/** Order-preserving unique set helper. */
+class LinkedSet<T> extends Set<T> {
+  constructor(iterable?: Iterable<T>) {
+    super(iterable)
+  }
+  [Symbol.iterator](): IterableIterator<T> {
+    return super[Symbol.iterator]()
+  }
 }

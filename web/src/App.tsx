@@ -1,6 +1,6 @@
 import { useEffect, useReducer } from 'react'
 import type { ConfigResponse, Job, ArtifactMeta, SessionResponse } from './types/api'
-import { getConfig } from './lib/api'
+import { getConfig, listArtifacts } from './lib/api'
 import { ArtifactPanel } from './components/ArtifactPanel'
 import { ChatPanel } from './components/ChatPanel'
 import { RightPanel } from './components/RightPanel'
@@ -33,6 +33,8 @@ interface AppState {
   rightPane: 'dashboard' | 'artifact'
   selectedArtifact: ArtifactMeta | null
   announceOpen: boolean
+  announcePrefill: string
+  announceArchetypeSlug: string
 }
 
 type AppAction =
@@ -45,6 +47,7 @@ type AppAction =
   | { type: 'SET_RIGHT_PANE'; pane: 'dashboard' | 'artifact'; artifact?: ArtifactMeta }
   | { type: 'SET_AUTONOMY'; slug: string; level: 1 | 2 | 3 | 4 }
   | { type: 'TOGGLE_ANNOUNCE' }
+  | { type: 'OPEN_ANNOUNCE'; prefill: string; archetype_slug: string }
 
 function buildCeoState(slug: string, autonomyLevel: 1 | 2 | 3 | 4 = 1): CeoState {
   return { slug, history: [], autonomyLevel, activeJob: null }
@@ -118,6 +121,13 @@ function reducer(state: AppState, action: AppAction): AppState {
     }
     case 'TOGGLE_ANNOUNCE':
       return { ...state, announceOpen: !state.announceOpen }
+    case 'OPEN_ANNOUNCE':
+      return {
+        ...state,
+        announceOpen: true,
+        announcePrefill: action.prefill,
+        announceArchetypeSlug: action.archetype_slug,
+      }
     default:
       return state
   }
@@ -133,6 +143,8 @@ const initialState: AppState = {
   rightPane: 'dashboard',
   selectedArtifact: null,
   announceOpen: false,
+  announcePrefill: '',
+  announceArchetypeSlug: '',
 }
 
 // ---- Component ----
@@ -178,25 +190,17 @@ export default function App() {
       {/* Announce modal */}
       {state.announceOpen && (
         <AnnounceModal
-          archetypes={state.config.archetypes}
-          activeCeoSlug={state.activeCeoSlug}
+          activeCeoSlug={state.announceArchetypeSlug || state.activeCeoSlug}
+          prefillMessage={state.announcePrefill}
           onClose={() => dispatch({ type: 'TOGGLE_ANNOUNCE' })}
         />
       )}
 
       {/* Top nav */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[#2A2A44] bg-[#0A0A0F]">
+      <div className="flex items-center px-4 py-2 border-b border-[#2A2A44] bg-[#0A0A0F]">
         <h1 className="font-mono text-sm text-[#00F5FF] tracking-widest uppercase neon-cyan">
           Executive in a Box
         </h1>
-        <button
-          onClick={() => dispatch({ type: 'TOGGLE_ANNOUNCE' })}
-          className="px-3 py-1 font-mono text-xs rounded border border-[#7FFF00] text-[#7FFF00] hover:shadow-lg transition-all"
-          style={{ boxShadow: '0 0 6px #7FFF0033' }}
-          aria-label="Open Slack announcement composer"
-        >
-          Announce ↗
-        </button>
       </div>
 
       {/* CEO portrait strip */}
@@ -232,6 +236,14 @@ export default function App() {
             onJobChange={(job) =>
               dispatch({ type: 'SET_JOB', slug: activeCeo.slug, job })
             }
+            onArtifactCreated={() =>
+              listArtifacts().then((artifacts) =>
+                dispatch({ type: 'SET_ARTIFACTS', artifacts })
+              ).catch(() => {})
+            }
+            onAnnounce={(prefill, archetype_slug) =>
+              dispatch({ type: 'OPEN_ANNOUNCE', prefill, archetype_slug })
+            }
           />
         ) : (
           <div className="flex-1 flex items-center justify-center">
@@ -244,6 +256,7 @@ export default function App() {
           mode={state.rightPane}
           artifact={state.selectedArtifact}
           config={state.config}
+          activeCeoSlug={state.activeCeoSlug}
         />
       </div>
     </div>

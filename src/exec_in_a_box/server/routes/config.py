@@ -36,6 +36,7 @@ def get_config():
             "name": a.name,
             "one_line": a.one_line,
             "traits": a.traits,
+            "response_style_blurb": a.response_style_blurb,
         }
         for a in list_archetypes()
     ]
