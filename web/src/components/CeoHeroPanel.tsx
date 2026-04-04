@@ -33,6 +33,20 @@ const AUTONOMY_LABELS: Record<number, string> = {
   4: 'Autonomous',
 }
 
+const AUTONOMY_DESCRIPTIONS: Record<number, string> = {
+  1: 'Reviews and advises. You make all final decisions.',
+  2: 'Provides structured recommendations. You approve before anything happens.',
+  3: 'Acts with your approval on defined tasks. (Coming soon)',
+  4: 'Full delegation within set boundaries. (Coming soon)',
+}
+
+const AUTONOMY_TOOLTIPS: Record<number, string> = {
+  1: 'Level 1 — Advisor: The CEO gives you a position and reasoning. You decide what to do with it.',
+  2: 'Level 2 — Recommender: The CEO structures a recommendation for you to approve or modify before acting.',
+  3: 'Level 3 — Delegated: The CEO can execute on defined tasks with your approval. (Coming soon)',
+  4: 'Level 4 — Autonomous: Full delegation within boundaries you set. (Coming soon)',
+}
+
 interface Props {
   archetypes: ArchetypeInfo[]
   ceos: Record<string, CeoState>
@@ -83,18 +97,20 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
   return (
     <div
       className="flex-shrink-0 border-b border-[#2A2A44] bg-[#12121A] overflow-hidden"
-      style={{ minHeight: '180px', maxHeight: '200px' }}
+      style={{ minHeight: '200px', maxHeight: '220px' }}
       role="banner"
       aria-label="Active CEO overview"
     >
       <div className="flex h-full">
-        {/* === LEFT 45% — portrait + blurb + mini icons === */}
-        <div className="flex flex-col" style={{ width: '45%', minWidth: '45%' }}>
+        {/* === LEFT 42% — portrait / autonomy / mini icons / blurb === */}
+        <div className="flex flex-col" style={{ width: '42%', minWidth: '42%' }}>
           <div className="flex flex-1 gap-3 px-4 pt-3 pb-2 overflow-hidden">
-            {/* Portrait + name */}
+
+            {/* Column A: portrait + name + autonomy buttons + mini icons */}
             <div className="flex flex-col items-center gap-1 flex-shrink-0">
-              <div className="relative flex-shrink-0" style={{ width: 96, height: 96 }} aria-hidden="true">
-                {/* Pulsing glow ring when active CEO is thinking/executizing */}
+
+              {/* Portrait */}
+              <div className="relative flex-shrink-0" style={{ width: 80, height: 80 }} aria-hidden="true">
                 {isExecutizing && (
                   <div
                     className="absolute inset-0 rounded animate-ping"
@@ -118,14 +134,12 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
                   />
                 </div>
               </div>
+
+              {/* Name / executizing verb */}
               <div className="text-center">
                 {isExecutizing ? (
-                  <p
-                    className="font-mono text-xs animate-pulse"
-                    style={{ color: accentColor }}
-                    aria-live="polite"
-                  >
-                    {verb}...
+                  <p className="font-mono text-xs animate-pulse" style={{ color: accentColor }} aria-live="polite">
+                    {verb}…
                   </p>
                 ) : (
                   <p className="font-mono text-xs text-[#F0F0FF]">
@@ -133,6 +147,44 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
                   </p>
                 )}
               </div>
+
+              {/* Autonomy level buttons */}
+              {activeCeo && (
+                <div className="flex flex-col items-center gap-0.5 mt-1">
+                  <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase">Autonomy</p>
+                  <div className="flex gap-1" role="group" aria-label="Autonomy level">
+                    {([1, 2, 3, 4] as const).map((level) => (
+                      <button
+                        key={level}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (level > 2) return
+                          setAutonomy(level).then(() => onSetAutonomy(activeCeoSlug, level))
+                        }}
+                        disabled={level > 2}
+                        title={AUTONOMY_TOOLTIPS[level]}
+                        aria-label={`Autonomy level ${level}: ${AUTONOMY_LABELS[level]}`}
+                        aria-pressed={activeCeo.autonomyLevel === level}
+                        className={[
+                          'w-6 h-6 font-mono text-xs rounded transition-all',
+                          activeCeo.autonomyLevel === level
+                            ? 'text-[#0A0A0F] font-bold'
+                            : level > 2
+                            ? 'opacity-30 cursor-not-allowed text-[#8888AA] border border-[#2A2A44]'
+                            : 'text-[#8888AA] border border-[#2A2A44] hover:border-[#00F5FF] hover:text-[#F0F0FF]',
+                        ].join(' ')}
+                        style={
+                          activeCeo.autonomyLevel === level
+                            ? { background: accentColor, borderColor: accentColor }
+                            : undefined
+                        }
+                      >
+                        {level}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Mini icons for other CEOs */}
               <div className="flex gap-1 mt-1 flex-wrap justify-center">
@@ -147,9 +199,8 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
                       title={otherExecutizing ? `${arch.name} — thinking…` : arch.name}
                       aria-label={`Switch to ${arch.name}${otherExecutizing ? ' (thinking)' : ''}`}
                       className="relative flex-shrink-0 hover:opacity-90 transition-opacity"
-                      style={{ width: 32, height: 32 }}
+                      style={{ width: 28, height: 28 }}
                     >
-                      {/* Pulsing ring for busy mini icons */}
                       {otherExecutizing && (
                         <div
                           className="absolute inset-0 rounded-full animate-ping"
@@ -175,52 +226,28 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
               </div>
             </div>
 
-            {/* Blurb + autonomy */}
-            <div className="flex flex-col gap-2 flex-1 min-w-0 pt-1">
+            {/* Column B: blurb + one-liner + autonomy description */}
+            <div className="flex flex-col gap-2 flex-1 min-w-0 pt-1 justify-center">
               {activeArchetype && (
-                <p className="font-mono text-[10px] leading-relaxed" style={{ color: `${accentColor}BB` }}>
+                <p className="font-mono text-xs leading-relaxed" style={{ color: `${accentColor}CC` }}>
                   {activeArchetype.response_style_blurb}
                 </p>
               )}
-              <p className="font-mono text-[9px] text-[#8888AA]">
+              <p className="font-mono text-[11px] text-[#8888AA]">
                 {activeArchetype?.one_line}
               </p>
-
-              {/* Autonomy toggles */}
               {activeCeo && (
-                <div className="flex gap-1 mt-auto" role="group" aria-label="Autonomy level">
-                  {([1, 2, 3, 4] as const).map((level) => (
-                    <button
-                      key={level}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (level > 2) return
-                        setAutonomy(level).then(() => onSetAutonomy(activeCeoSlug, level))
-                      }}
-                      disabled={level > 2}
-                      title={`Level ${level}: ${AUTONOMY_LABELS[level]}${level > 2 ? ' (coming soon)' : ''}`}
-                      aria-label={`Autonomy level ${level}: ${AUTONOMY_LABELS[level]}`}
-                      aria-pressed={activeCeo.autonomyLevel === level}
-                      className={[
-                        'w-6 h-6 font-mono text-[10px] rounded transition-all',
-                        activeCeo.autonomyLevel === level
-                          ? 'text-[#0A0A0F] font-bold'
-                          : level > 2
-                          ? 'opacity-30 cursor-not-allowed text-[#8888AA] border border-[#2A2A44]'
-                          : 'text-[#8888AA] border border-[#2A2A44] hover:border-[#00F5FF]',
-                      ].join(' ')}
-                      style={
-                        activeCeo.autonomyLevel === level
-                          ? { background: accentColor, borderColor: accentColor }
-                          : undefined
-                      }
-                    >
-                      {level}
-                    </button>
-                  ))}
+                <div className="mt-1 border-t border-[#2A2A44] pt-1">
+                  <p className="font-mono text-[10px] text-[#8888AA] uppercase tracking-widest mb-0.5">
+                    Level {activeCeo.autonomyLevel} — {AUTONOMY_LABELS[activeCeo.autonomyLevel]}
+                  </p>
+                  <p className="font-mono text-xs text-[#F0F0FF] leading-snug">
+                    {AUTONOMY_DESCRIPTIONS[activeCeo.autonomyLevel]}
+                  </p>
                 </div>
               )}
             </div>
+
           </div>
         </div>
 
@@ -229,7 +256,7 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
 
           {/* Column 1 — Radar chart */}
           <div className="flex-1 flex flex-col items-center justify-center p-2 min-w-0">
-            <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase mb-1">
+            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase mb-1">
               Personality
             </p>
             {activeArchetype && (
@@ -239,36 +266,36 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
 
           {/* Column 2 — Session stats (A/R/M) */}
           <div className="flex-1 flex flex-col gap-2 p-3 min-w-0 justify-center">
-            <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase">
+            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase">
               Agreement
             </p>
             <div>
               {agreementRate !== null ? (
-                <p className="font-mono text-2xl font-bold leading-none" style={{ color: accentColor }}>
+                <p className="font-mono text-3xl font-bold leading-none" style={{ color: accentColor }}>
                   {agreementRate}%
                 </p>
               ) : (
-                <p className="font-mono text-2xl font-bold leading-none text-[#444466]">—</p>
+                <p className="font-mono text-3xl font-bold leading-none text-[#444466]">—</p>
               )}
-              <p className="font-mono text-[10px] text-[#8888AA] mt-0.5">
+              <p className="font-mono text-xs text-[#8888AA] mt-0.5">
                 {total > 0 ? `${total} session${total !== 1 ? 's' : ''}` : 'no sessions yet'}
               </p>
             </div>
             {total > 0 && (
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1.5">
                 {[
                   { label: 'Adopted', count: adopted, color: '#7FFF00' },
                   { label: 'Modified', count: modified, color: '#FFE600' },
                   { label: 'Rejected', count: rejected, color: '#FF2D78' },
                 ].map(({ label, count, color }) => (
                   <div key={label}>
-                    <div className="flex justify-between font-mono text-[9px] mb-0.5">
+                    <div className="flex justify-between font-mono text-[10px] mb-0.5">
                       <span style={{ color }}>{label}</span>
                       <span className="text-[#8888AA]">
                         {count} · {Math.round((count / total) * 100)}%
                       </span>
                     </div>
-                    <div className="h-1 bg-[#1A1A2E] rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-[#1A1A2E] rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-500"
                         style={{ width: `${(count / total) * 100}%`, backgroundColor: color }}
@@ -282,31 +309,31 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
 
           {/* Column 3 — API info */}
           <div className="flex-1 flex flex-col gap-2 p-3 min-w-0 justify-center">
-            <p className="font-mono text-[9px] text-[#8888AA] tracking-widest uppercase">
+            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase">
               API
             </p>
-            <div className="font-mono text-[10px] space-y-1.5">
+            <div className="font-mono space-y-2">
               <div>
-                <p className="text-[#8888AA] text-[9px]">Provider</p>
-                <p className="text-[#F0F0FF]">{config.provider_name}</p>
+                <p className="text-[#8888AA] text-[10px]">Provider</p>
+                <p className="text-[#F0F0FF] text-xs">{config.provider_name}</p>
               </div>
               <div>
-                <p className="text-[#8888AA] text-[9px]">Model</p>
-                <p className="text-[#F0F0FF] truncate" title={currentModel ?? undefined}>
+                <p className="text-[#8888AA] text-[10px]">Model</p>
+                <p className="text-[#F0F0FF] text-xs truncate" title={currentModel ?? undefined}>
                   {currentModel ?? <span className="text-[#444466]">—</span>}
                 </p>
               </div>
               <div>
-                <p className="text-[#8888AA] text-[9px]">Session tokens</p>
-                <p className="text-[#F0F0FF]">
+                <p className="text-[#8888AA] text-[10px]">Session tokens</p>
+                <p className="text-[#F0F0FF] text-xs">
                   {sessionTokens > 0
                     ? sessionTokens.toLocaleString()
                     : <span className="text-[#444466]">—</span>}
                 </p>
               </div>
               <div>
-                <p className="text-[#8888AA] text-[9px]">API key</p>
-                <p className={config.api_key_set ? 'text-[#7FFF00]' : 'text-[#FF2D78]'}>
+                <p className="text-[#8888AA] text-[10px]">API key</p>
+                <p className={`text-xs ${config.api_key_set ? 'text-[#7FFF00]' : 'text-[#FF2D78]'}`}>
                   {config.api_key_set ? '✓ set' : '✗ missing'}
                 </p>
               </div>
