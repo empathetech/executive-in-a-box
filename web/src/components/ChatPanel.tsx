@@ -20,29 +20,37 @@ interface Props {
   onArtifactCreated?: () => void
   onAnnounce: (prefillMessage: string, archetype_slug: string) => void
   onSendingChange: (sending: boolean) => void
+  onDecision: (msgIndex: number, decision: 'adopted' | 'rejected' | 'modified', modification?: string) => void
 }
 
 const ARCHETYPE_COLORS: Record<string, string> = {
   operator:  '#FF2D78',
-  visionary: '#3D00CC',
+  visionary: '#8B5CF6',
   advocate:  '#7FFF00',
   analyst:   '#00F5FF',
 }
 
 function formatResponse(r: SessionResponse): string {
-  const parts = [
-    `**Position:** ${r.position}`,
-    '',
-    `**Reasoning:** ${r.reasoning}`,
-    '',
-    `**Pros:**\n${r.pros.map((p) => `  • ${p}`).join('\n')}`,
-    `**Cons:**\n${r.cons.map((c) => `  • ${c}`).join('\n')}`,
-  ]
+  // Position leads without a label — the CEO's own formatting/structure speaks first.
+  const parts = [r.position]
+
+  // Reasoning is secondary context
+  if (r.reasoning) {
+    parts.push('', `— reasoning —`, r.reasoning)
+  }
+
+  // Pros/cons only if non-empty
+  if (r.pros.length > 0 || r.cons.length > 0) {
+    parts.push('')
+    if (r.pros.length > 0) parts.push(`Pros:\n${r.pros.map((p) => `  + ${p}`).join('\n')}`)
+    if (r.cons.length > 0) parts.push(`Cons:\n${r.cons.map((c) => `  – ${c}`).join('\n')}`)
+  }
+
   if (r.flags.length > 0) {
-    parts.push('', `**Flags:**\n${r.flags.map((f) => `  ⚠ ${f}`).join('\n')}`)
+    parts.push('', `Flags:\n${r.flags.map((f) => `  ⚠ ${f}`).join('\n')}`)
   }
   if (r.questions_for_user.length > 0) {
-    parts.push('', `**Questions for you:**\n${r.questions_for_user.map((q) => `  ? ${q}`).join('\n')}`)
+    parts.push('', `Questions:\n${r.questions_for_user.map((q) => `  ? ${q}`).join('\n')}`)
   }
   return parts.join('\n')
 }
@@ -73,7 +81,7 @@ function MessageBubble({ msg, accentColor }: { msg: ChatMessage; accentColor: st
   )
 }
 
-export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreated, onAnnounce, onSendingChange }: Props) {
+export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreated, onAnnounce, onSendingChange, onDecision }: Props) {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const sending = ceo.sending
@@ -86,47 +94,56 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [ceo.history])
 
-  // Subscribe to active job via SSE
+  // Subscribe to active job via SSE.
+  // First does a getJob() sync so that if the user switched tabs while the job
+  // was running and it already finished, we handle it immediately without SSE.
   useEffect(() => {
     const job = ceo.activeJob
     if (!job || job.status === 'complete' || job.status === 'failed') return
 
-    const unsub = subscribeToJob(
-      job.id,
-      (updatedJob) => {
-        onJobChange(updatedJob)
-        if (updatedJob.status === 'complete' && updatedJob.result) {
-          try {
-            const parsed = JSON.parse(updatedJob.result) as SessionResponse
-            const content = formatResponse(parsed)
-            onMessage({
-              role: 'assistant',
-              content,
-              response: parsed,
-              timestamp: new Date().toISOString(),
-            })
-          } catch {
-            onMessage({
-              role: 'assistant',
-              content: updatedJob.result,
-              timestamp: new Date().toISOString(),
-            })
-          }
-          setToast(`${config.archetypes.find(a => a.slug === ceo.slug)?.name ?? 'CEO'} finished.`)
-          setTimeout(() => setToast(null), 4000)
-          onJobChange(null)
-        } else if (updatedJob.status === 'failed') {
-          setError(updatedJob.error ?? 'Job failed.')
-          onJobChange(null)
-        }
-      },
-      (errMsg) => {
-        setError(errMsg)
-        onJobChange(null)
-      },
-    )
+    let cancelled = false
+    let sseUnsub: (() => void) | null = null
 
-    return unsub
+    function handleJobUpdate(updatedJob: Job) {
+      onJobChange(updatedJob)
+      if (updatedJob.status === 'complete' && updatedJob.result) {
+        try {
+          const parsed = JSON.parse(updatedJob.result) as SessionResponse
+          const content = formatResponse(parsed)
+          onMessage({ role: 'assistant', content, response: parsed, timestamp: new Date().toISOString() })
+        } catch {
+          onMessage({ role: 'assistant', content: updatedJob.result, timestamp: new Date().toISOString() })
+        }
+        setToast(`${config.archetypes.find(a => a.slug === ceo.slug)?.name ?? 'CEO'} finished.`)
+        setTimeout(() => setToast(null), 4000)
+        onJobChange(null)
+      } else if (updatedJob.status === 'failed') {
+        setError(updatedJob.error ?? 'Job failed.')
+        onJobChange(null)
+      }
+    }
+
+    getJob(job.id).then((updatedJob) => {
+      if (cancelled) return
+      // If already finished, handle inline — no SSE needed
+      if (updatedJob.status === 'complete' || updatedJob.status === 'failed') {
+        handleJobUpdate(updatedJob)
+        return
+      }
+      // Still running — subscribe to SSE
+      sseUnsub = subscribeToJob(
+        job.id,
+        (sseJob) => { if (!cancelled) handleJobUpdate(sseJob) },
+        (errMsg) => {
+          if (!cancelled) { setError(errMsg); onJobChange(null) }
+        },
+      )
+    }).catch(() => {})
+
+    return () => {
+      cancelled = true
+      sseUnsub?.()
+    }
   }, [ceo.activeJob?.id])
 
   const isExecutizing = ceo.activeJob != null && ceo.activeJob.status === 'running'
@@ -207,6 +224,7 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
                 response={msg.response}
                 activeCeoSlug={ceo.slug}
                 onAnnounce={onAnnounce}
+                onDecision={(decision, modification) => onDecision(i, decision, modification)}
               />
             )}
           </div>
