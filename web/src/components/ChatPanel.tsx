@@ -1,15 +1,15 @@
 /**
- * Center pane — conversational chat window per CEO archetype.
- * Handles direct responses and Executize job dispatch.
- * Typewriter effect simulates streaming on long responses.
+ * Center pane — tabbed: Chat conversation + open artifact viewers.
+ * The input bar is always visible regardless of which tab is active,
+ * so the user can continue chatting while reading an artifact.
  *
  * Reference: hacky-hours/02-design/USER_JOURNEYS.md § Ask the CEO a Question
  */
 
 import { useEffect, useRef, useState } from 'react'
-import type { ConfigResponse, Job, SessionResponse } from '../types/api'
+import type { ArtifactMeta, ConfigResponse, Job, SessionResponse } from '../types/api'
 import type { CeoState, ChatMessage } from '../App'
-import { sendMessage, subscribeToJob, getJob } from '../lib/api'
+import { getArtifact, sendMessage, subscribeToJob, getJob } from '../lib/api'
 import { DecisionBar } from './DecisionBar'
 
 interface Props {
@@ -21,37 +21,31 @@ interface Props {
   onAnnounce: (prefillMessage: string, archetype_slug: string) => void
   onSendingChange: (sending: boolean) => void
   onDecision: (msgIndex: number, decision: 'adopted' | 'rejected' | 'modified', modification?: string) => void
+  // Artifact tabs
+  openArtifacts: ArtifactMeta[]
+  activeArtifactId: string | null   // null = Chat tab active
+  onSetActiveArtifact: (id: string | null) => void
+  onCloseArtifact: (id: string) => void
+  onExpandArtifact: (artifact: ArtifactMeta) => void
 }
 
-const ARCHETYPE_COLORS: Record<string, string> = {
+export const ARCHETYPE_COLORS: Record<string, string> = {
   operator:  '#FF2D78',
   visionary: '#8B5CF6',
   advocate:  '#7FFF00',
   analyst:   '#00F5FF',
 }
 
-function formatResponse(r: SessionResponse): string {
-  // Position leads without a label — the CEO's own formatting/structure speaks first.
+export function formatResponse(r: SessionResponse): string {
   const parts = [r.position]
-
-  // Reasoning is secondary context
-  if (r.reasoning) {
-    parts.push('', `— reasoning —`, r.reasoning)
-  }
-
-  // Pros/cons only if non-empty
+  if (r.reasoning) parts.push('', `— reasoning —`, r.reasoning)
   if (r.pros.length > 0 || r.cons.length > 0) {
     parts.push('')
     if (r.pros.length > 0) parts.push(`Pros:\n${r.pros.map((p) => `  + ${p}`).join('\n')}`)
     if (r.cons.length > 0) parts.push(`Cons:\n${r.cons.map((c) => `  – ${c}`).join('\n')}`)
   }
-
-  if (r.flags.length > 0) {
-    parts.push('', `Flags:\n${r.flags.map((f) => `  ⚠ ${f}`).join('\n')}`)
-  }
-  if (r.questions_for_user.length > 0) {
-    parts.push('', `Questions:\n${r.questions_for_user.map((q) => `  ? ${q}`).join('\n')}`)
-  }
+  if (r.flags.length > 0) parts.push('', `Flags:\n${r.flags.map((f) => `  ⚠ ${f}`).join('\n')}`)
+  if (r.questions_for_user.length > 0) parts.push('', `Questions:\n${r.questions_for_user.map((q) => `  ? ${q}`).join('\n')}`)
   return parts.join('\n')
 }
 
@@ -81,22 +75,84 @@ function MessageBubble({ msg, accentColor }: { msg: ChatMessage; accentColor: st
   )
 }
 
-export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreated, onAnnounce, onSendingChange, onDecision }: Props) {
+function ArtifactTabContent({
+  artifact,
+  onExpand,
+}: {
+  artifact: ArtifactMeta
+  onExpand: () => void
+}) {
+  const [content, setContent] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    getArtifact(artifact.session_id, artifact.filename)
+      .then((r) => setContent(r.content))
+      .catch(() => setContent('Failed to load artifact.'))
+      .finally(() => setLoading(false))
+  }, [artifact.id])
+
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden p-4">
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
+        <h2 className="font-mono text-xs text-[#00F5FF] tracking-widest uppercase truncate flex-1 mr-4">
+          {artifact.filename}
+        </h2>
+        <button
+          onClick={onExpand}
+          className="font-mono text-xs text-[#8888AA] hover:text-[#F0F0FF] transition-colors px-2 py-1 border border-[#2A2A44] rounded hover:border-[#00F5FF]"
+          title="Expand to fullscreen"
+        >
+          ⊞ Expand
+        </button>
+      </div>
+      {loading ? (
+        <p className="text-[#8888AA] font-mono text-xs animate-pulse">Loading…</p>
+      ) : (
+        <pre className="flex-1 overflow-auto font-mono text-sm text-[#F0F0FF] whitespace-pre-wrap leading-relaxed">
+          {content}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+export function ChatPanel({
+  ceo,
+  config,
+  onMessage,
+  onJobChange,
+  onArtifactCreated,
+  onAnnounce,
+  onSendingChange,
+  onDecision,
+  openArtifacts,
+  activeArtifactId,
+  onSetActiveArtifact,
+  onCloseArtifact,
+  onExpandArtifact,
+}: Props) {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const sending = ceo.sending
   const [toast, setToast] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const accentColor = ARCHETYPE_COLORS[ceo.slug] ?? '#00F5FF'
+  const sending = ceo.sending
 
-  // Scroll to bottom on new messages
+  const hasTabs = openArtifacts.length > 0
+  const activeTab = activeArtifactId ?? 'chat'
+  const activeArtifact = openArtifacts.find((a) => a.id === activeArtifactId) ?? null
+
+  // Scroll to bottom on new messages (only when on chat tab)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [ceo.history])
+    if (activeTab === 'chat') {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [ceo.history, activeTab])
 
   // Subscribe to active job via SSE.
-  // First does a getJob() sync so that if the user switched tabs while the job
-  // was running and it already finished, we handle it immediately without SSE.
+  // Polls getJob() first so tab-switching doesn't leave a stale "Executizing" state.
   useEffect(() => {
     const job = ceo.activeJob
     if (!job || job.status === 'complete' || job.status === 'failed') return
@@ -109,12 +165,11 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
       if (updatedJob.status === 'complete' && updatedJob.result) {
         try {
           const parsed = JSON.parse(updatedJob.result) as SessionResponse
-          const content = formatResponse(parsed)
-          onMessage({ role: 'assistant', content, response: parsed, timestamp: new Date().toISOString() })
+          onMessage({ role: 'assistant', content: formatResponse(parsed), response: parsed, timestamp: new Date().toISOString() })
         } catch {
           onMessage({ role: 'assistant', content: updatedJob.result, timestamp: new Date().toISOString() })
         }
-        setToast(`${config.archetypes.find(a => a.slug === ceo.slug)?.name ?? 'CEO'} finished.`)
+        setToast(`${config.archetypes.find((a) => a.slug === ceo.slug)?.name ?? 'CEO'} finished.`)
         setTimeout(() => setToast(null), 4000)
         onJobChange(null)
       } else if (updatedJob.status === 'failed') {
@@ -125,25 +180,18 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
 
     getJob(job.id).then((updatedJob) => {
       if (cancelled) return
-      // If already finished, handle inline — no SSE needed
       if (updatedJob.status === 'complete' || updatedJob.status === 'failed') {
         handleJobUpdate(updatedJob)
         return
       }
-      // Still running — subscribe to SSE
       sseUnsub = subscribeToJob(
         job.id,
         (sseJob) => { if (!cancelled) handleJobUpdate(sseJob) },
-        (errMsg) => {
-          if (!cancelled) { setError(errMsg); onJobChange(null) }
-        },
+        (errMsg) => { if (!cancelled) { setError(errMsg); onJobChange(null) } },
       )
     }).catch(() => {})
 
-    return () => {
-      cancelled = true
-      sseUnsub?.()
-    }
+    return () => { cancelled = true; sseUnsub?.() }
   }, [ceo.activeJob?.id])
 
   const isExecutizing = ceo.activeJob != null && ceo.activeJob.status === 'running'
@@ -156,18 +204,13 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
     setError(null)
     onSendingChange(true)
 
-    onMessage({
-      role: 'user',
-      content: msg,
-      timestamp: new Date().toISOString(),
-    })
+    // Switch to chat tab so user sees the response arrive
+    onSetActiveArtifact(null)
+
+    onMessage({ role: 'user', content: msg, timestamp: new Date().toISOString() })
 
     try {
-      const result = await sendMessage({
-        message: msg,
-        archetype_slug: ceo.slug,
-        executize,
-      })
+      const result = await sendMessage({ message: msg, archetype_slug: ceo.slug, executize })
 
       if (executize && result.job_id) {
         const job = await getJob(result.job_id)
@@ -178,16 +221,8 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
           timestamp: new Date().toISOString(),
         })
       } else if (!executize) {
-        const content = formatResponse(result)
-        onMessage({
-          role: 'assistant',
-          content,
-          response: result,
-          timestamp: new Date().toISOString(),
-        })
-        if (result.artifact) {
-          onArtifactCreated?.()
-        }
+        onMessage({ role: 'assistant', content: formatResponse(result), response: result, timestamp: new Date().toISOString() })
+        if (result.artifact) onArtifactCreated?.()
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.')
@@ -203,61 +238,133 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
     }
   }
 
+  const ceoName = config.archetypes.find((a) => a.slug === ceo.slug)?.name ?? 'the CEO'
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#0D0D15] border-x border-[#2A2A44]">
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4" role="log" aria-label="Conversation" aria-live="polite">
-        {ceo.history.length === 0 && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-[#8888AA] font-mono text-sm text-center max-w-sm">
-              Ask your CEO a question, or hit{' '}
-              <span style={{ color: accentColor }}>Executize</span> for deep work
-              that runs in the background.
-            </p>
-          </div>
-        )}
-        {ceo.history.map((msg, i) => (
-          <div key={i} className="mb-2">
-            <MessageBubble msg={msg} accentColor={accentColor} />
-            {msg.response && (
-              <DecisionBar
-                response={msg.response}
-                activeCeoSlug={ceo.slug}
-                onAnnounce={onAnnounce}
-                onDecision={(decision, modification) => onDecision(i, decision, modification)}
-              />
-            )}
-          </div>
-        ))}
-        {(sending || isExecutizing) && (
-          <div className="flex justify-start mb-4">
-            <div
-              className="px-4 py-3 rounded border font-mono text-sm"
-              style={{ borderColor: `${accentColor}44`, color: accentColor }}
-              aria-live="polite"
-              aria-label="CEO is thinking"
-            >
-              <span className="animate-pulse">
-                {isExecutizing ? 'Executizing...' : 'Thinking...'}
-              </span>
-            </div>
-          </div>
-        )}
-        {error && (
-          <div
-            className="px-4 py-2 rounded border border-[#FF2D78] bg-[#FF2D7822] text-[#FF2D78] font-mono text-sm mb-4"
-            role="alert"
+
+      {/* Tab bar — only shown when artifact tabs are open */}
+      {hasTabs && (
+        <div
+          className="flex items-stretch border-b border-[#2A2A44] bg-[#0A0A0F] overflow-x-auto flex-shrink-0"
+          role="tablist"
+          aria-label="Content tabs"
+        >
+          {/* Chat tab */}
+          <button
+            role="tab"
+            aria-selected={activeTab === 'chat'}
+            onClick={() => onSetActiveArtifact(null)}
+            className={[
+              'px-4 py-2 font-mono text-xs tracking-widest uppercase transition-colors whitespace-nowrap border-b-2',
+              activeTab === 'chat'
+                ? 'text-[#F0F0FF] border-b-2'
+                : 'text-[#8888AA] hover:text-[#F0F0FF] border-transparent',
+            ].join(' ')}
+            style={activeTab === 'chat' ? { borderColor: accentColor } : undefined}
           >
-            {error}
+            Chat
+          </button>
+
+          {/* Artifact tabs */}
+          {openArtifacts.map((artifact) => (
+            <div
+              key={artifact.id}
+              className={[
+                'flex items-center border-b-2 transition-colors',
+                activeTab === artifact.id ? 'border-[#00F5FF]' : 'border-transparent',
+              ].join(' ')}
+            >
+              <button
+                role="tab"
+                aria-selected={activeTab === artifact.id}
+                onClick={() => onSetActiveArtifact(artifact.id)}
+                className={[
+                  'px-3 py-2 font-mono text-xs transition-colors whitespace-nowrap',
+                  activeTab === artifact.id ? 'text-[#00F5FF]' : 'text-[#8888AA] hover:text-[#F0F0FF]',
+                ].join(' ')}
+              >
+                {artifact.filename}
+              </button>
+              <button
+                onClick={() => onCloseArtifact(artifact.id)}
+                className="pr-2 pl-0 py-2 text-[#8888AA] hover:text-[#FF2D78] font-mono text-xs transition-colors"
+                aria-label={`Close ${artifact.filename}`}
+                title="Close tab"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Content area — switches between chat and artifact */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {activeTab === 'chat' ? (
+          <div className="flex-1 overflow-y-auto p-4" role="log" aria-label="Conversation" aria-live="polite">
+            {ceo.history.length === 0 && (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-[#8888AA] font-mono text-sm text-center max-w-sm">
+                  Ask your CEO a question, or hit{' '}
+                  <span style={{ color: accentColor }}>Executize</span> for deep work
+                  that runs in the background.
+                </p>
+              </div>
+            )}
+            {ceo.history.map((msg, i) => (
+              <div key={i} className="mb-2">
+                <MessageBubble msg={msg} accentColor={accentColor} />
+                {msg.response && (
+                  <DecisionBar
+                    response={msg.response}
+                    activeCeoSlug={ceo.slug}
+                    onAnnounce={onAnnounce}
+                    onDecision={(decision, modification) => onDecision(i, decision, modification)}
+                  />
+                )}
+              </div>
+            ))}
+            {(sending || isExecutizing) && (
+              <div className="flex justify-start mb-4">
+                <div
+                  className="px-4 py-3 rounded border font-mono text-sm"
+                  style={{ borderColor: `${accentColor}44`, color: accentColor }}
+                  aria-live="polite"
+                  aria-label="CEO is thinking"
+                >
+                  <span className="animate-pulse">
+                    {isExecutizing ? 'Executizing…' : 'Thinking…'}
+                  </span>
+                </div>
+              </div>
+            )}
+            {error && (
+              <div
+                className="px-4 py-2 rounded border border-[#FF2D78] bg-[#FF2D7822] text-[#FF2D78] font-mono text-sm mb-4"
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+        ) : activeArtifact ? (
+          <ArtifactTabContent
+            artifact={activeArtifact}
+            onExpand={() => onExpandArtifact(activeArtifact)}
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-[#8888AA] font-mono text-xs">Artifact not found.</p>
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
-      {/* Toast notification */}
+      {/* Toast — always above input */}
       {toast && (
         <div
-          className="mx-4 mb-2 px-4 py-2 rounded border font-mono text-sm animate-pulse"
+          className="mx-4 mb-2 px-4 py-2 rounded border font-mono text-sm animate-pulse flex-shrink-0"
           style={{ borderColor: accentColor, color: accentColor }}
           role="status"
           aria-live="polite"
@@ -266,13 +373,13 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
         </div>
       )}
 
-      {/* Input area */}
-      <div className="border-t border-[#2A2A44] p-4 bg-[#12121A]">
+      {/* Input bar — persistent across all tabs */}
+      <div className="border-t border-[#2A2A44] p-4 bg-[#12121A] flex-shrink-0">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={`Ask ${config.archetypes.find(a => a.slug === ceo.slug)?.name ?? 'the CEO'} a question... (Enter to send, Shift+Enter for newline)`}
+          placeholder={`Ask ${ceoName} a question… (Enter to send, Shift+Enter for newline)`}
           disabled={sending || isExecutizing}
           rows={3}
           aria-label="Message input"
@@ -309,11 +416,7 @@ export function ChatPanel({ ceo, config, onMessage, onJobChange, onArtifactCreat
             style={
               !input.trim() || sending || isExecutizing
                 ? undefined
-                : {
-                    borderColor: accentColor,
-                    color: accentColor,
-                    boxShadow: `0 0 8px ${accentColor}44`,
-                  }
+                : { borderColor: accentColor, color: accentColor, boxShadow: `0 0 8px ${accentColor}44` }
             }
           >
             Executize ⚡

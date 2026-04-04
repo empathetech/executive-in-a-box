@@ -2,7 +2,6 @@ import { useEffect, useReducer, useState } from 'react'
 import type { ConfigResponse, Job, ArtifactMeta, SessionResponse } from './types/api'
 import { getConfig, listArtifacts } from './lib/api'
 import { ArtifactModal } from './components/ArtifactModal'
-import { ArtifactPane } from './components/ArtifactPane'
 import { ChatPanel } from './components/ChatPanel'
 import { CeoHeroPanel } from './components/CeoHeroPanel'
 import { LeftPanel } from './components/LeftPanel'
@@ -55,7 +54,7 @@ type AppAction =
   | { type: 'SET_DECISION'; slug: string; messageIndex: number; decision: 'adopted' | 'rejected' | 'modified'; modification?: string }
   | { type: 'OPEN_ARTIFACT_PANE'; artifact: ArtifactMeta }
   | { type: 'CLOSE_ARTIFACT_PANE'; artifactId: string }
-  | { type: 'SET_ACTIVE_ARTIFACT'; artifactId: string }
+  | { type: 'SET_ACTIVE_ARTIFACT'; artifactId: string | null }
 
 function buildCeoState(slug: string, autonomyLevel: 1 | 2 | 3 | 4 = 1): CeoState {
   return { slug, history: [], autonomyLevel, activeJob: null, sending: false }
@@ -277,7 +276,7 @@ export default function App() {
           }
         />
 
-        {/* Center pane — chat */}
+        {/* Center pane — chat + artifact tabs */}
         {activeCeo ? (
           <ChatPanel
             ceo={activeCeo}
@@ -308,22 +307,20 @@ export default function App() {
                 modification,
               })
             }
+            openArtifacts={state.openArtifacts}
+            activeArtifactId={state.activeArtifactId}
+            onSetActiveArtifact={(id) =>
+              dispatch({ type: 'SET_ACTIVE_ARTIFACT', artifactId: id })
+            }
+            onCloseArtifact={(id) =>
+              dispatch({ type: 'CLOSE_ARTIFACT_PANE', artifactId: id })
+            }
+            onExpandArtifact={(artifact) => setArtifactModal(artifact)}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-[#8888AA] font-mono">Select a CEO to begin.</p>
           </div>
-        )}
-
-        {/* Inline artifact pane — shown when artifacts are open */}
-        {state.openArtifacts.length > 0 && (
-          <ArtifactPane
-            openArtifacts={state.openArtifacts}
-            activeArtifactId={state.activeArtifactId}
-            onSetActive={(id) => dispatch({ type: 'SET_ACTIVE_ARTIFACT', artifactId: id })}
-            onClose={(id) => dispatch({ type: 'CLOSE_ARTIFACT_PANE', artifactId: id })}
-            onExpand={(artifact) => setArtifactModal(artifact)}
-          />
         )}
       </div>
     </div>
