@@ -91,7 +91,7 @@ export function AnnounceModal({ activeCeoSlug, prefillMessage, onClose }: Props)
       aria-modal="true"
       aria-label="Announce to Slack"
     >
-      <div className="w-full max-w-lg mx-4 bg-[#12121A] border border-[#2A2A44] rounded overflow-hidden pixel-border">
+      <div className="w-full max-w-lg mx-4 bg-[#12121A] border border-[#2A2A44] rounded overflow-hidden pixel-border flex flex-col" style={{ maxHeight: '90vh' }}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[#2A2A44]">
           <span className="font-mono text-sm text-[#00F5FF] tracking-widest uppercase">
@@ -107,7 +107,7 @@ export function AnnounceModal({ activeCeoSlug, prefillMessage, onClose }: Props)
         </div>
 
         {/* Body */}
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-4 overflow-y-auto flex-1">
           {noChannels ? (
             <div
               className="border border-[#2A2A44] rounded p-3 bg-[#1A1A2E] font-mono text-xs text-[#8888AA] whitespace-pre-line"
@@ -172,7 +172,8 @@ export function AnnounceModal({ activeCeoSlug, prefillMessage, onClose }: Props)
               onChange={(e) => { setMessage(e.target.value); setPreviewed(false) }}
               rows={5}
               placeholder="Write your announcement..."
-              className="w-full bg-[#0A0A0F] border border-[#2A2A44] rounded px-3 py-2 font-mono text-sm text-[#F0F0FF] placeholder:text-[#8888AA] resize-none focus:outline-none focus:border-[#00F5FF]"
+              className="w-full bg-[#0A0A0F] border border-[#2A2A44] rounded px-3 py-2 font-mono text-sm text-[#F0F0FF] placeholder:text-[#8888AA] resize-y focus:outline-none focus:border-[#00F5FF]"
+              style={{ maxHeight: '200px' }}
               aria-required="true"
             />
           </div>
