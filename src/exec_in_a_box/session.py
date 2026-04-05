@@ -122,7 +122,9 @@ def _send_to_slack(response: ValidatedResponse, config, archetype) -> None:
     choice = _input("  Pick [1-3]: ").strip()
 
     if choice == "1":
-        message = response.position
+        import re as _re
+        _announce = _re.findall(r"<announce>([\s\S]*?)<\/announce>", response.position, _re.IGNORECASE)
+        message = "\n\n".join(m.strip() for m in _announce) if _announce else response.position
     elif choice == "2":
         print()
         message = _input(colorize("  Message: ", C.CYAN)).strip()
