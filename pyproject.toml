@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "executive-in-a-box"
-version = "1.0.0"
+version = "1.0.1"
 description = "AI-powered executive advisor — CEO-level strategic guidance without a human CEO."
 readme = "README.md"
 license = "MIT"
