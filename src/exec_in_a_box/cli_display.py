@@ -48,6 +48,55 @@ def colorize(text: str, *codes: str) -> str:
 
 # ---- Box drawing ----
 
+def render_markdown_ansi(text: str, indent: str = "  ") -> list[str]:
+    """Convert a markdown string to ANSI-colored terminal lines.
+
+    Handles:
+    - **bold** → ANSI bold (section headers pop visually)
+    - *italic* / _italic_ → plain (strip markers; ANSI italic is unreliable)
+    - `code` → dimmed
+    - ## Headings → bold cyan
+    - - bullet / • bullet → indented bullet
+    - blank lines → preserved
+    All output lines are prefixed with ``indent``.
+    """
+    import re
+
+    def _apply_inline(s: str) -> str:
+        # `code`
+        s = re.sub(r"`([^`]+)`", lambda m: colorize(m.group(1), C.DIM), s)
+        # **bold** (must come before *italic*)
+        s = re.sub(r"\*\*(.+?)\*\*", lambda m: colorize(m.group(1), C.BOLD, C.WHITE), s)
+        # *italic* or _italic_
+        s = re.sub(r"\*([^*]+)\*", r"\1", s)
+        s = re.sub(r"_([^_]+)_", r"\1", s)
+        return s
+
+    out: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+
+        # ATX headings: ## Foo
+        heading_match = re.match(r"^#{1,3}\s+(.*)", line)
+        if heading_match:
+            content = _apply_inline(heading_match.group(1))
+            out.append(indent + colorize(content, C.BOLD, C.CYAN))
+            continue
+
+        # Bullet points: - item or • item
+        bullet_match = re.match(r"^(\s*)[*\-•]\s+(.*)", line)
+        if bullet_match:
+            extra_indent = bullet_match.group(1)
+            content = _apply_inline(bullet_match.group(2))
+            out.append(indent + extra_indent + colorize("• ", C.DIM) + content)
+            continue
+
+        # Normal line (including blank)
+        out.append(indent + _apply_inline(line) if line else "")
+
+    return out
+
+
 def box(title: str, lines: list[str], width: int = 60) -> str:
     """Render a box with a title and content lines.
 
@@ -188,7 +237,7 @@ def format_response_cli(response, autonomy_level: int) -> list[str]:
     else:
         lines.append(colorize("  POSITION", C.BOLD, C.CYAN))
     lines.append("")
-    lines.append(f"  {response.position}")
+    lines.extend(render_markdown_ansi(response.position))
     lines.append("")
     lines.append(
         colorize("  Confidence: ", C.DIM)
