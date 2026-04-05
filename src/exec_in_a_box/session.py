@@ -46,19 +46,50 @@ def _input(prompt: str) -> str:
         sys.exit(0)
 
 
-def _get_decision(autonomy_level: int, has_slack: bool) -> str:
-    """Get the user's decision. Returns 'y', 'n', 'm', 'h', or 's'."""
+def _load_feedback(slug: str) -> "dict | None":
+    """Load stored feedback for a CEO archetype (returns None if not found)."""
+    from exec_in_a_box.server.routes.feedback import _load
+    return _load(slug)
+
+
+def _build_modification_message(original_question: str, original_position: str, feedback: str) -> str:
+    """Construct the user message for a modify re-run (mirrors server route)."""
+    return (
+        f"I previously asked you:\n{original_question}\n\n"
+        f"Your response was:\n{original_position}\n\n"
+        f"I have feedback on this response:\n{feedback}\n\n"
+        "Please revise your position based on my feedback. "
+        "Use the same JSON response format."
+    )
+
+
+def _get_decision(autonomy_level: int, has_slack: bool, allow_modify: bool = True) -> str:
+    """Get the user's decision. Returns 'y', 'n', 'm', 'h', or 's'.
+
+    allow_modify=False hides the Modify option (used on revised responses so
+    the loop is adopt/reject-only, matching the web behaviour).
+    """
     slack_hint = " / " + colorize("[S]lack", C.LIME) if has_slack else ""
     label = "recommendation" if autonomy_level == 2 else "position"
+    modify_hint = (
+        colorize("[M]odify", C.YELLOW) + colorize(" / ", C.DIM)
+        if allow_modify else ""
+    )
     prompt = (
         colorize(f"\n  Adopt this {label}? ", C.DIM)
         + colorize("[Y]es", C.LIME) + colorize(" / ", C.DIM)
         + colorize("[N]o", C.MAGENTA) + colorize(" / ", C.DIM)
-        + colorize("[M]odify", C.YELLOW) + colorize(" / ", C.DIM)
+        + modify_hint
         + colorize("[H]ow", C.CYAN) + colorize(" (reasoning)", C.DIM)
         + slack_hint
         + colorize(": ", C.DIM)
     )
+
+    valid = {"y", "yes", "n", "no", "h", "how", "reasoning"}
+    if allow_modify:
+        valid |= {"m", "modify"}
+    if has_slack:
+        valid |= {"s", "slack"}
 
     while True:
         raw = _input(prompt).strip().lower()
@@ -66,13 +97,14 @@ def _get_decision(autonomy_level: int, has_slack: bool) -> str:
             return "y"
         if raw in ("n", "no"):
             return "n"
-        if raw in ("m", "modify"):
+        if raw in ("m", "modify") and allow_modify:
             return "m"
         if raw in ("h", "how", "reasoning"):
             return "h"
         if raw in ("s", "slack") and has_slack:
             return "s"
-        print(colorize("  Enter: Y, N, M, H" + (", S" if has_slack else ""), C.DIM))
+        opts = "Y, N, " + ("M, " if allow_modify else "") + "H" + (", S" if has_slack else "")
+        print(colorize(f"  Enter: {opts}", C.DIM))
 
 
 def _send_to_slack(response: ValidatedResponse, config, archetype) -> None:
@@ -151,7 +183,9 @@ def _log_decision(
     response: ValidatedResponse,
     archetype_name: str,
     decision: str,
-    modification: Optional[str],
+    modification: Optional[str] = None,
+    reason: Optional[str] = None,
+    is_modification: bool = False,
 ) -> None:
     """Append the decision to the decisions log."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -166,6 +200,10 @@ def _log_decision(
     )
     if modification:
         entry += f"\n**Modification:** {modification}\n"
+    if reason:
+        entry += f"\n**Reason:** {reason}\n"
+    if is_modification:
+        entry += "\n*(This was a revised response following a Modify re-run)*\n"
 
     storage.append_file("org/decisions.md", entry)
 
@@ -177,8 +215,10 @@ def _save_session(
     decision: str,
     modification: Optional[str],
     archetype_slug: str = "",
+    reason: Optional[str] = None,
+    is_modification: bool = False,
 ) -> None:
-    """Save the full session transcript."""
+    """Save the full session transcript and update the session index."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     path = storage.next_session_path()
 
@@ -211,6 +251,10 @@ def _save_session(
     content += f"\n## Decision\n{decision_text}\n"
     if modification:
         content += f"\n**Modification:** {modification}\n"
+    if reason:
+        content += f"\n**Reason:** {reason}\n"
+    if is_modification:
+        content += "\n*(This was a revised response following a Modify re-run)*\n"
 
     storage.write_file(str(path.relative_to(storage.get_data_dir())), content)
 
@@ -223,6 +267,9 @@ def _save_session(
         "position": response.position[:200],
         "confidence": response.confidence,
         "ambition_level": response.ambition_level,
+        "reason": reason or "",
+        "modification": modification or "",
+        "is_modification": is_modification,
     })
 
 
@@ -448,6 +495,11 @@ def run_session(initial_slug: Optional[str] = None) -> None:
         # Build prompt
         system_prompt, user_message, secret_matches = build_prompt(archetype, question)
 
+        # Inject feedback calibration if active — this is the grading feedback loop
+        fb = _load_feedback(active_slug)
+        if fb and fb.get("active", True) and fb.get("system_prompt_addon"):
+            system_prompt = system_prompt + "\n\n" + fb["system_prompt_addon"]
+
         # Handle secrets
         if secret_matches:
             print_warning("Suspected secrets found in your context:")
@@ -505,41 +557,93 @@ def run_session(initial_slug: Optional[str] = None) -> None:
             )
 
 
-        from exec_in_a_box.slack import get_webhook_url
-        has_slack = get_webhook_url() is not None
+        from exec_in_a_box.slack import list_webhooks
+        has_slack = len(list_webhooks()) > 0
+
+        # ---- Decision loop ----
+        # Track whether we are in a modification revision cycle (Y/N only).
+        current_result = result
+        is_modification_cycle = False
 
         while True:
-            decision = _get_decision(effective_level, has_slack)
+            decision = _get_decision(
+                effective_level, has_slack, allow_modify=not is_modification_cycle
+            )
+
             if decision == "h":
                 print()
-                print(colorize(f"  ─── How {result.archetype} got here ───", C.CYAN))
+                print(colorize(f"  ─── How {current_result.archetype} got here ───", C.CYAN))
                 print()
                 print(
                     colorize("  Ambition level: ", C.DIM)
-                    + colorize(result.ambition_level.replace("_", " "), C.BOLD, C.WHITE)
+                    + colorize(current_result.ambition_level.replace("_", " "), C.BOLD, C.WHITE)
                 )
                 print()
-                print(f"  {result.reasoning}")
+                print(f"  {current_result.reasoning}")
                 print()
                 print(colorize("  ─────────────────────────────────────", C.CYAN))
                 continue
+
             if decision == "s":
-                _send_to_slack(result, config, archetype)
+                _send_to_slack(current_result, config, archetype)
                 continue
-            break
 
-        modification = None
-        if decision == "m":
-            modification = _input(
-                colorize("  What would you change? ", C.CYAN)
+            if decision == "m":
+                feedback_text = _input(
+                    colorize("  What should be different? ", C.CYAN)
+                ).strip()
+                if not feedback_text:
+                    continue
+
+                # Log the modify decision immediately, then re-run
+                _log_decision(question, current_result, archetype.name, "m",
+                              modification=feedback_text, is_modification=False)
+                _save_session(question, current_result, archetype.name, "m",
+                              feedback_text, archetype.slug, is_modification=False)
+
+                # Re-run the LLM with revision context
+                revised_msg = _build_modification_message(
+                    question, current_result.position, feedback_text
+                )
+                print_thinking(archetype.name)
+
+                try:
+                    provider = create_provider(config.provider_name, api_key=api_key)
+                    rev_response = provider.send(system_prompt, revised_msg)
+                except ProviderError as e:
+                    print_error(e.user_message)
+                    break
+
+                rev_result = validate_response(rev_response.content)
+                if isinstance(rev_result, list):
+                    print_error("Couldn't parse the revised response.")
+                    break
+
+                current_result = rev_result
+                is_modification_cycle = True
+                print()
+                print(colorize("  ─── Revised Response ───", C.CYAN))
+                print_response(current_result, effective_level, archetype.name)
+                continue  # back to Y/N only
+
+            # decision is "y" or "n" — optional reason
+            label = "adopting" if decision == "y" else "rejecting"
+            reason_raw = _input(
+                colorize(f"  Reason for {label} (optional, Enter to skip): ", C.DIM)
             ).strip()
+            reason = reason_raw or None
 
-        _log_decision(question, result, archetype.name, decision, modification)
-        _save_session(question, result, archetype.name, decision, modification, archetype.slug)
+            _log_decision(question, current_result, archetype.name, decision,
+                          reason=reason, is_modification=is_modification_cycle)
+            _save_session(question, current_result, archetype.name, decision,
+                          None, archetype.slug, reason=reason,
+                          is_modification=is_modification_cycle)
 
-        decision_text = {"y": "Adopted", "n": "Rejected", "m": "Modified"}[decision]
-        detail = f' — "{modification}"' if decision == "m" and modification else ""
-        print(
-            colorize(f"\n  {decision_text}{detail}", C.LIME)
-            + colorize(" · logged to decisions.md · informs future sessions", C.DIM)
-        )
+            decision_text = "Adopted" if decision == "y" else "Rejected"
+            reason_detail = f' — "{reason}"' if reason else ""
+            adj = " (revision)" if is_modification_cycle else ""
+            print(
+                colorize(f"\n  {decision_text}{reason_detail}{adj}", C.LIME)
+                + colorize(" · logged to decisions.md", C.DIM)
+            )
+            break

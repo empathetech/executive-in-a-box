@@ -20,8 +20,11 @@ from exec_in_a_box.server.routes import (
     artifacts,
     board,
     config,
+    feedback,
+    integrations,
     jobs,
     session,
+    sessions,
     slack,
     stats,
     stream,
@@ -37,11 +40,14 @@ app = FastAPI(
 app.include_router(config.router)
 app.include_router(board.router)
 app.include_router(session.router)
+app.include_router(sessions.router)
 app.include_router(jobs.router)
 app.include_router(stream.router)
 app.include_router(artifacts.router)
 app.include_router(slack.router)
 app.include_router(stats.router)
+app.include_router(integrations.router)
+app.include_router(feedback.router)
 
 
 def _find_web_dist() -> Path | None:

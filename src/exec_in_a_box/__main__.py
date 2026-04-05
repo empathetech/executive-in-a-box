@@ -119,6 +119,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show CEO personality profiles and decision history",
     )
 
+    feedback_parser = subparsers.add_parser(
+        "feedback",
+        help="View, synthesize, reset, or toggle CEO feedback calibration",
+    )
+    feedback_parser.add_argument(
+        "feedback_action",
+        nargs="?",
+        default="show",
+        choices=["show", "refresh", "reset", "toggle"],
+        help="Action to perform (default: show)",
+    )
+    feedback_parser.add_argument(
+        "feedback_slug",
+        nargs="?",
+        default=None,
+        help="CEO archetype slug (default: currently configured CEO)",
+    )
+
     all_hands_parser = subparsers.add_parser(
         "all-hands",
         help="Facilitate an all-hands meeting across all archetypes",
@@ -214,7 +232,7 @@ def cmd_autonomy() -> None:
 def cmd_config_show() -> None:
     from exec_in_a_box.config import load_config
     from exec_in_a_box.credentials import get_api_key
-    from exec_in_a_box.slack import get_webhook_url
+    from exec_in_a_box.slack import list_webhooks
 
     config = load_config()
     if config is None:
@@ -223,8 +241,8 @@ def cmd_config_show() -> None:
 
     api_key = get_api_key(config.provider_name)
     key_status = "configured" if api_key else "not set"
-    webhook = get_webhook_url()
-    slack_status = "configured" if webhook else "not set"
+    webhooks = list_webhooks()
+    slack_status = f"{len(webhooks)} webhook(s) configured" if webhooks else "not set"
 
     print()
     print("Current configuration:")
@@ -434,30 +452,207 @@ def cmd_test_connection(provider_name: str) -> None:
 
 def cmd_history() -> None:
     from exec_in_a_box import storage
+    from exec_in_a_box.cli_display import C, colorize
 
-    sessions = storage.list_sessions()
-    if not sessions:
-        print("No sessions yet. Run: exec-in-a-box")
+    DECISION_COLORS = {
+        "adopted":  C.LIME,
+        "rejected": C.MAGENTA,
+        "modified": C.YELLOW,
+    }
+    DECISION_ICONS = {
+        "adopted": "✓",
+        "rejected": "✗",
+        "modified": "~",
+    }
+
+    index = storage.read_session_index()
+    if not index:
+        print(colorize("  No sessions yet. Run: exec-in-a-box", C.DIM))
         return
 
+    # Newest first
+    records = list(reversed(index))
+
     print()
-    print("Recent sessions:")
+    print(colorize(f"  Session History  ({len(records)} total)", C.BOLD))
+    print(colorize("  ─" * 30, C.DIM))
+
+    for rec in records[:30]:
+        decision = rec.get("decision", "").lower()
+        d_color = DECISION_COLORS.get(decision, C.DIM)
+        d_icon  = DECISION_ICONS.get(decision, "?")
+
+        slug = rec.get("slug", "?")
+        ts   = rec.get("timestamp", "")[:10]
+        q    = rec.get("question", rec.get("position", ""))[:60]
+
+        print(
+            colorize(f"  {d_icon} ", d_color)
+            + colorize(f"{slug:<10}", C.CYAN)
+            + colorize(f"{ts}  ", C.DIM)
+            + colorize(q + ("…" if len(q) >= 60 else ""), d_color)
+        )
+        if rec.get("reason"):
+            print(colorize(f"    ↳ {rec['reason'][:70]}", C.DIM))
+
+    if len(records) > 30:
+        print(colorize(f"\n  … and {len(records) - 30} more", C.DIM))
     print()
-    for path in sessions[:20]:
-        # Read first non-empty, non-header line as preview
-        text = path.read_text(encoding="utf-8")
-        lines = [
-            line.strip()
-            for line in text.splitlines()
-            if line.strip() and not line.startswith("#")
-        ]
-        preview = lines[0][:70] if lines else "(empty)"
-        print(f"  {path.name}  {preview}")
-    print()
-    total = len(sessions)
-    if total > 20:
-        print(f"  ... and {total - 20} more")
-    print(f"  Sessions stored at: {storage.get_data_dir() / 'sessions'}")
+
+
+def cmd_feedback(slug: str | None, action: str) -> None:
+    """View, synthesize, reset, or toggle feedback for a CEO archetype."""
+    from exec_in_a_box.archetypes import list_archetypes
+    from exec_in_a_box.cli_display import C, colorize
+
+    archetypes = list_archetypes()
+
+    # Resolve slug
+    if slug is None:
+        from exec_in_a_box.config import load_config
+        config = load_config()
+        slug = config.archetype_slug if config else archetypes[0].slug
+
+    archetype = next((a for a in archetypes if a.slug == slug), None)
+    if archetype is None:
+        print(f"Unknown archetype: {slug}. Options: {', '.join(a.slug for a in archetypes)}")
+        return
+
+    from exec_in_a_box.server.routes.feedback import _load, _save, _recent_decisions
+
+    DECISION_COLORS = {"adopted": C.LIME, "rejected": C.MAGENTA, "modified": C.YELLOW}
+
+    if action == "show":
+        data = _load(slug)
+        decisions = _recent_decisions(slug)
+        print()
+        print(colorize(f"  Feedback — {archetype.name}", C.BOLD, C.CYAN))
+        print()
+        if data and data.get("summary"):
+            active = data.get("active", True)
+            status = colorize("● Active", C.LIME) if active else colorize("○ Baseline", C.DIM)
+            print(colorize("  Summary: ", C.DIM) + f'"{data["summary"]}"')
+            print(colorize("  Status:  ", C.DIM) + status)
+            if data.get("updated_at"):
+                print(colorize(f"  Updated: {data['updated_at'][:10]}", C.DIM))
+        else:
+            print(colorize("  No feedback synthesized yet.", C.DIM))
+        print()
+        print(colorize(f"  {len(decisions)} decision(s) in history:", C.DIM))
+        for rec in decisions[:5]:
+            d = rec.get("decision", "").lower()
+            icon = {"adopted": "✓", "rejected": "✗", "modified": "~"}.get(d, "?")
+            color = DECISION_COLORS.get(d, C.DIM)
+            print(
+                colorize(f"    {icon} ", color)
+                + colorize(rec.get("question", "")[:55], C.DIM)
+            )
+        if len(decisions) > 5:
+            print(colorize(f"    … and {len(decisions) - 5} more", C.DIM))
+        print()
+        print(colorize("  Commands:", C.DIM))
+        print(colorize("    exec-in-a-box feedback refresh", C.CYAN) + colorize(" [slug]  — synthesize from decisions", C.DIM))
+        print(colorize("    exec-in-a-box feedback toggle",  C.CYAN) + colorize("  [slug]  — switch baseline/adjusted", C.DIM))
+        print(colorize("    exec-in-a-box feedback reset",   C.CYAN) + colorize("   [slug]  — clear feedback", C.DIM))
+        print()
+
+    elif action == "refresh":
+        import json
+        from exec_in_a_box.archetypes import TRAIT_LABELS
+        from exec_in_a_box.config import load_config
+        from exec_in_a_box.credentials import get_api_key
+        from exec_in_a_box.providers import ProviderError, create_provider
+        from exec_in_a_box.server.routes.feedback import _build_synthesis_prompt
+
+        config = load_config()
+        if config is None:
+            print("No configuration. Run: exec-in-a-box setup")
+            return
+        api_key = get_api_key(config.provider_name)
+        if api_key is None:
+            print(f"No API key for {config.provider_name}. Run: exec-in-a-box setup")
+            return
+
+        decisions = _recent_decisions(slug)
+        if not decisions:
+            print(colorize(f"\n  No decisions logged for {archetype.name} yet.", C.DIM))
+            print(colorize("  Make some Adopt/Reject/Modify decisions first.\n", C.DIM))
+            return
+
+        print()
+        print(colorize(f"  Synthesizing feedback from {len(decisions)} decision(s)…", C.CYAN), flush=True)
+
+        synthesis_prompt = _build_synthesis_prompt(archetype, decisions)
+        system = (
+            "You are a meta-advisor that analyses AI performance data. "
+            "You respond only with valid JSON exactly as requested."
+        )
+        try:
+            provider = create_provider(config.provider_name, api_key=api_key)
+            response = provider.send(system, synthesis_prompt)
+        except ProviderError as e:
+            print(f"  LLM error: {e.user_message}")
+            return
+
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            print("  Couldn't parse LLM response. Try again.")
+            return
+
+        adj = parsed.get("trait_adjustments", {})
+        clean_adj = {
+            t: round(max(-0.3, min(0.3, float(adj.get(t, 0.0)))), 3)
+            for t in TRAIT_LABELS
+        }
+
+        from datetime import datetime, timezone
+        existing = _load(slug)
+        result = {
+            "slug": slug,
+            "summary": str(parsed.get("summary", "")),
+            "trait_adjustments": clean_adj,
+            "system_prompt_addon": str(parsed.get("system_prompt_addon", "")),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "decision_count": len(decisions),
+            "active": existing.get("active", True) if existing else True,
+        }
+        _save(slug, result)
+
+        print()
+        print(colorize(f"  {archetype.name} feedback updated:", C.BOLD))
+        print()
+        print(colorize(f'  "{result["summary"]}"', C.WHITE))
+        print()
+        if result["active"]:
+            print(colorize("  ✓ Active — injected into future prompts", C.LIME))
+        else:
+            print(colorize("  ○ Inactive — run 'feedback toggle' to activate", C.DIM))
+        print()
+
+    elif action == "reset":
+        from exec_in_a_box.server.routes.feedback import _feedback_path
+        path = _feedback_path(slug)
+        if path.exists():
+            path.unlink()
+            print(colorize(f"\n  Feedback cleared for {archetype.name}. Reverted to baseline.\n", C.LIME))
+        else:
+            print(colorize(f"\n  No feedback stored for {archetype.name}.\n", C.DIM))
+
+    elif action == "toggle":
+        data = _load(slug)
+        if data is None:
+            print(colorize(f"\n  No feedback stored for {archetype.name}. Run 'feedback refresh' first.\n", C.DIM))
+            return
+        was_active = data.get("active", True)
+        data["active"] = not was_active
+        _save(slug, data)
+        state = colorize("Active (adjusted)", C.LIME) if data["active"] else colorize("Baseline", C.YELLOW)
+        print(colorize(f"\n  {archetype.name} personality mode → {state}\n", C.BOLD))
 
 
 def cmd_web(host: str, port: int, dev: bool) -> None:
@@ -823,6 +1018,13 @@ def main() -> None:
 
     if args.command == "all-hands":
         cmd_all_hands(args.items)
+        return
+
+    if args.command == "feedback":
+        cmd_feedback(
+            slug=getattr(args, "feedback_slug", None),
+            action=getattr(args, "feedback_action", "show"),
+        )
         return
 
 

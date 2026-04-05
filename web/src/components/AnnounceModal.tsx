@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import type { SlackChannel } from '../types/api'
-import { getSlackChannels, sendSlack } from '../lib/api'
+import { getSlackChannels, getSlackDefault, sendSlack } from '../lib/api'
 
 interface Props {
   activeCeoSlug: string
@@ -33,15 +33,17 @@ export function AnnounceModal({ activeCeoSlug, prefillMessage, onClose }: Props)
     setPreviewed(false)
   }, [prefillMessage])
 
-  // Fetch channels on mount
+  // Fetch channels + default on mount, pre-select the default webhook
   useEffect(() => {
     setChannelsLoading(true)
-    getSlackChannels()
-      .then((ch) => {
+    Promise.all([getSlackChannels(), getSlackDefault()])
+      .then(([ch, defaultId]) => {
         setChannels(ch)
         if (ch.length > 0) {
-          setSelectedWorkspace(ch[0].workspace)
-          setSelectedChannelId(ch[0].id)
+          const preferred = defaultId ? ch.find(c => c.id === defaultId) : null
+          const initial = preferred ?? ch[0]
+          setSelectedWorkspace(initial.workspace)
+          setSelectedChannelId(initial.id)
         }
       })
       .catch(() => {})

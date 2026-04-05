@@ -239,6 +239,44 @@ class ValidatedResponse:
     raw_json: dict = field(default_factory=dict)
 
 
+def _heal_json(text: str) -> str:
+    """Fix common LLM JSON formatting issues before parsing.
+
+    When archetypes use rich markdown inside JSON string values, models
+    sometimes emit literal newlines/tabs instead of the required escape
+    sequences (\\n, \\t).  This walks the text character-by-character and
+    replaces bare control characters inside string values with their JSON
+    escape equivalents.
+    """
+    result: list[str] = []
+    in_string = False
+    prev_backslash = False
+
+    for char in text:
+        if prev_backslash:
+            result.append(char)
+            prev_backslash = False
+        elif char == "\\" and in_string:
+            result.append(char)
+            prev_backslash = True
+        elif char == '"':
+            in_string = not in_string
+            result.append(char)
+        elif in_string:
+            if char == "\n":
+                result.append("\\n")
+            elif char == "\r":
+                result.append("\\r")
+            elif char == "\t":
+                result.append("\\t")
+            else:
+                result.append(char)
+        else:
+            result.append(char)
+
+    return "".join(result)
+
+
 def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError]:
     """Validate an LLM response against the archetype output schema.
 
@@ -260,11 +298,14 @@ def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError
         text = text[:-3]
     text = text.strip()
 
-    # Parse JSON
+    # Parse JSON — with a healing fallback for literal newlines inside strings
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as e:
-        return [ValidationError("_root", f"Response is not valid JSON: {e}")]
+    except json.JSONDecodeError:
+        try:
+            data = json.loads(_heal_json(text))
+        except json.JSONDecodeError as e:
+            return [ValidationError("_root", f"Response is not valid JSON: {e}")]
 
     if not isinstance(data, dict):
         return [ValidationError("_root", "Response is not a JSON object")]

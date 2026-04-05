@@ -7,6 +7,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ArtifactMeta, ConfigResponse, Job, SessionResponse } from '../types/api'
 import type { CeoState, ChatMessage } from '../App'
 import { getArtifact, sendMessage, subscribeToJob, getJob } from '../lib/api'
@@ -55,16 +57,51 @@ function MessageBubble({ msg, accentColor }: { msg: ChatMessage; accentColor: st
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
       <div
         className={[
-          'max-w-[80%] rounded px-4 py-3 font-mono text-sm whitespace-pre-wrap leading-relaxed',
+          'max-w-[85%] rounded px-4 py-3 font-mono text-sm leading-relaxed',
           isUser
-            ? 'bg-[#1A1A2E] text-[#F0F0FF] border border-[#2A2A44]'
+            ? 'bg-[#1A1A2E] text-[#F0F0FF] border border-[#2A2A44] whitespace-pre-wrap'
             : 'bg-[#12121A] text-[#F0F0FF] border',
         ].join(' ')}
         style={!isUser ? { borderColor: `${accentColor}66` } : undefined}
         role="article"
         aria-label={isUser ? 'Your message' : 'CEO response'}
       >
-        {msg.content}
+        {isUser ? (
+          msg.content
+        ) : (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              // Style markdown elements to match the dark theme
+              p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+              strong: ({ children }) => <strong className="font-bold text-[#F0F0FF]">{children}</strong>,
+              em: ({ children }) => <em className="italic text-[#D0D0EE]">{children}</em>,
+              h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-1" style={{ color: accentColor }}>{children}</h1>,
+              h2: ({ children }) => <h2 className="text-base font-bold mb-1.5 mt-1" style={{ color: accentColor }}>{children}</h2>,
+              h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-1 text-[#F0F0FF]">{children}</h3>,
+              ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
+              ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
+              li: ({ children }) => <li className="text-[#F0F0FF]">{children}</li>,
+              code: ({ children, className }) => {
+                const isBlock = className?.includes('language-')
+                return isBlock
+                  ? <code className="block bg-[#0A0A0F] border border-[#2A2A44] rounded px-3 py-2 text-xs my-2 overflow-x-auto whitespace-pre">{children}</code>
+                  : <code className="bg-[#1A1A2E] border border-[#2A2A44] rounded px-1 text-xs" style={{ color: accentColor }}>{children}</code>
+              },
+              blockquote: ({ children }) => (
+                <blockquote className="border-l-2 pl-3 my-2 italic text-[#D0D0EE]" style={{ borderColor: accentColor }}>
+                  {children}
+                </blockquote>
+              ),
+              hr: () => <hr className="border-[#2A2A44] my-3" />,
+              table: ({ children }) => <table className="border-collapse text-xs my-2 w-full">{children}</table>,
+              th: ({ children }) => <th className="border border-[#2A2A44] px-2 py-1 text-left text-[#8888AA] font-bold">{children}</th>,
+              td: ({ children }) => <td className="border border-[#2A2A44] px-2 py-1">{children}</td>,
+            }}
+          >
+            {msg.content}
+          </ReactMarkdown>
+        )}
         {msg.response && (
           <div className="mt-2 pt-2 border-t border-[#2A2A44] text-[10px] text-[#8888AA]">
             {msg.response.model} · {msg.response.input_tokens + msg.response.output_tokens} tokens
@@ -140,7 +177,6 @@ export function ChatPanel({
   const accentColor = ARCHETYPE_COLORS[ceo.slug] ?? '#00F5FF'
   const sending = ceo.sending
 
-  const hasTabs = openArtifacts.length > 0
   const activeTab = activeArtifactId ?? 'chat'
   const activeArtifact = openArtifacts.find((a) => a.id === activeArtifactId) ?? null
 
@@ -243,61 +279,59 @@ export function ChatPanel({
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[#0D0D15] border-x border-[#2A2A44]">
 
-      {/* Tab bar — only shown when artifact tabs are open */}
-      {hasTabs && (
-        <div
-          className="flex items-stretch border-b border-[#2A2A44] bg-[#0A0A0F] overflow-x-auto flex-shrink-0"
-          role="tablist"
-          aria-label="Content tabs"
+      {/* Tab bar — always visible so there's no layout shift when artifacts are added */}
+      <div
+        className="flex items-stretch border-b border-[#2A2A44] bg-[#0A0A0F] overflow-x-auto flex-shrink-0"
+        role="tablist"
+        aria-label="Content tabs"
+      >
+        {/* Chat tab */}
+        <button
+          role="tab"
+          aria-selected={activeTab === 'chat'}
+          onClick={() => onSetActiveArtifact(null)}
+          className={[
+            'px-4 py-2 font-mono text-xs tracking-widest uppercase transition-colors whitespace-nowrap border-b-2',
+            activeTab === 'chat'
+              ? 'text-[#F0F0FF] border-b-2'
+              : 'text-[#8888AA] hover:text-[#F0F0FF] border-transparent',
+          ].join(' ')}
+          style={activeTab === 'chat' ? { borderColor: accentColor } : undefined}
         >
-          {/* Chat tab */}
-          <button
-            role="tab"
-            aria-selected={activeTab === 'chat'}
-            onClick={() => onSetActiveArtifact(null)}
-            className={[
-              'px-4 py-2 font-mono text-xs tracking-widest uppercase transition-colors whitespace-nowrap border-b-2',
-              activeTab === 'chat'
-                ? 'text-[#F0F0FF] border-b-2'
-                : 'text-[#8888AA] hover:text-[#F0F0FF] border-transparent',
-            ].join(' ')}
-            style={activeTab === 'chat' ? { borderColor: accentColor } : undefined}
-          >
-            Chat
-          </button>
+          1-on-1
+        </button>
 
-          {/* Artifact tabs */}
-          {openArtifacts.map((artifact) => (
-            <div
-              key={artifact.id}
+        {/* Artifact tabs — only rendered when artifacts are open */}
+        {openArtifacts.map((artifact) => (
+          <div
+            key={artifact.id}
+            className={[
+              'flex items-center border-b-2 transition-colors',
+              activeTab === artifact.id ? 'border-[#00F5FF]' : 'border-transparent',
+            ].join(' ')}
+          >
+            <button
+              role="tab"
+              aria-selected={activeTab === artifact.id}
+              onClick={() => onSetActiveArtifact(artifact.id)}
               className={[
-                'flex items-center border-b-2 transition-colors',
-                activeTab === artifact.id ? 'border-[#00F5FF]' : 'border-transparent',
+                'px-3 py-2 font-mono text-xs transition-colors whitespace-nowrap',
+                activeTab === artifact.id ? 'text-[#00F5FF]' : 'text-[#8888AA] hover:text-[#F0F0FF]',
               ].join(' ')}
             >
-              <button
-                role="tab"
-                aria-selected={activeTab === artifact.id}
-                onClick={() => onSetActiveArtifact(artifact.id)}
-                className={[
-                  'px-3 py-2 font-mono text-xs transition-colors whitespace-nowrap',
-                  activeTab === artifact.id ? 'text-[#00F5FF]' : 'text-[#8888AA] hover:text-[#F0F0FF]',
-                ].join(' ')}
-              >
-                {artifact.filename}
-              </button>
-              <button
-                onClick={() => onCloseArtifact(artifact.id)}
-                className="pr-2 pl-0 py-2 text-[#8888AA] hover:text-[#FF2D78] font-mono text-xs transition-colors"
-                aria-label={`Close ${artifact.filename}`}
-                title="Close tab"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+              {artifact.filename}
+            </button>
+            <button
+              onClick={() => onCloseArtifact(artifact.id)}
+              className="pr-2 pl-0 py-2 text-[#8888AA] hover:text-[#FF2D78] font-mono text-xs transition-colors"
+              aria-label={`Close ${artifact.filename}`}
+              title="Close tab"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
 
       {/* Content area — switches between chat and artifact */}
       <div className="flex-1 overflow-hidden flex flex-col">
@@ -312,19 +346,30 @@ export function ChatPanel({
                 </p>
               </div>
             )}
-            {ceo.history.map((msg, i) => (
-              <div key={i} className="mb-2">
-                <MessageBubble msg={msg} accentColor={accentColor} />
-                {msg.response && (
-                  <DecisionBar
-                    response={msg.response}
-                    activeCeoSlug={ceo.slug}
-                    onAnnounce={onAnnounce}
-                    onDecision={(decision, modification) => onDecision(i, decision, modification)}
-                  />
-                )}
-              </div>
-            ))}
+            {ceo.history.map((msg, i) => {
+              // Find the most recent user message before this assistant message
+              let question = ''
+              for (let j = i - 1; j >= 0; j--) {
+                if (ceo.history[j].role === 'user') { question = ceo.history[j].content; break }
+              }
+              return (
+                <div key={i} className="mb-2">
+                  <MessageBubble msg={msg} accentColor={accentColor} />
+                  {msg.response && (
+                    <DecisionBar
+                      response={msg.response}
+                      activeCeoSlug={ceo.slug}
+                      question={question}
+                      isModifiedResponse={msg.isModifiedResponse}
+                      slackConfigured={config.slack_configured}
+                      onAnnounce={onAnnounce}
+                      onMessage={(newMsg) => onMessage(newMsg)}
+                      onDecision={(decision, modification) => onDecision(i, decision, modification)}
+                    />
+                  )}
+                </div>
+              )
+            })}
             {(sending || isExecutizing) && (
               <div className="flex justify-start mb-4">
                 <div

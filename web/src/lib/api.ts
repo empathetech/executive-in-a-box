@@ -119,10 +119,52 @@ export const getStats = () => request<StatsResponse>('/stats')
 export const getSlackChannels = () =>
   request<{ channels: SlackChannel[] }>('/slack/channels').then((r) => r.channels)
 
+export const getSlackDefault = () =>
+  request<{ default_webhook_id: string | null }>('/slack/default').then((r) => r.default_webhook_id)
+
+export const setSlackDefault = (webhook_id: string) =>
+  request<{ default_webhook_id: string }>('/slack/default', {
+    method: 'POST',
+    body: JSON.stringify({ webhook_id }),
+  })
+
 export const sendSlack = (body: AnnounceRequest) =>
   request<{ sent: boolean }>('/slack/announce', {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+
+// ---- Feedback ----
+
+export const getFeedback = (slug: string) =>
+  request<import('../types/api').FeedbackResponse>(`/feedback/${slug}`)
+
+export const refreshFeedback = (slug: string) =>
+  request<import('../types/api').FeedbackResponse>(`/feedback/${slug}/refresh`, { method: 'POST' })
+
+export const clearFeedback = (slug: string) =>
+  request<{ cleared: boolean }>(`/feedback/${slug}`, { method: 'DELETE' })
+
+export const setFeedbackActive = (slug: string, active: boolean) =>
+  request<import('../types/api').FeedbackResponse>(`/feedback/${slug}/active`, {
+    method: 'POST',
+    body: JSON.stringify({ active }),
+  })
+
+// ---- Session History ----
+
+export const listSessions = () =>
+  request<{ sessions: import('../types/api').SessionRecord[] }>('/sessions').then((r) => r.sessions)
+
+// ---- Integrations ----
+
+export const getLlmProviders = () =>
+  request<{ providers: Array<{ slug: string; label: string; needs_key: boolean; key_set: boolean; active: boolean }> }>('/integrations/llm').then((r) => r.providers)
+
+export const setActiveProvider = (provider: string) =>
+  request<{ active: string }>('/integrations/llm/active', {
+    method: 'POST',
+    body: JSON.stringify({ provider }),
   })
 
 // ---- Decisions ----
@@ -135,6 +177,8 @@ export const sendDecision = (body: {
   ambition_level: string
   decision: string
   modification?: string
+  reason?: string
+  is_modification?: boolean
 }) =>
   request<{ recorded: boolean }>('/session/decision', {
     method: 'POST',

@@ -7,10 +7,12 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import type { ArchetypeInfo, ConfigResponse, StatsResponse } from '../types/api'
+import type { ArchetypeInfo, ConfigResponse, FeedbackResponse, StatsResponse } from '../types/api'
 import type { CeoState } from '../App'
-import { getStats, setAutonomy } from '../lib/api'
+import { getStats, setAutonomy, getFeedback, setFeedbackActive } from '../lib/api'
 import { RadarChart } from './RadarChart'
+import { ScorecardPanel } from './ScorecardPanel'
+import { IntegrationsPanel } from './IntegrationsPanel'
 
 const ARCHETYPE_COLORS: Record<string, string> = {
   operator:  '#FF2D78',
@@ -52,16 +54,25 @@ interface Props {
   ceos: Record<string, CeoState>
   activeCeoSlug: string
   config: ConfigResponse
+  statsVersion?: number   // incremented by App on each decision to trigger stats refresh
   onSelectCeo: (slug: string) => void
   onSetAutonomy: (slug: string, level: 1 | 2 | 3 | 4) => void
 }
 
-export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelectCeo, onSetAutonomy }: Props) {
+export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, statsVersion = 0, onSelectCeo, onSetAutonomy }: Props) {
   const [stats, setStats] = useState<StatsResponse | null>(null)
+  const [feedback, setFeedback] = useState<FeedbackResponse | null>(null)
 
+  // Re-fetch stats whenever a decision is recorded (statsVersion bumped by App)
   useEffect(() => {
     getStats().then(setStats).catch(() => {})
-  }, [])
+  }, [statsVersion])
+
+  // Reload feedback whenever the active CEO changes
+  useEffect(() => {
+    setFeedback(null)
+    getFeedback(activeCeoSlug).then(setFeedback).catch(() => {})
+  }, [activeCeoSlug])
 
   const activeArchetype = archetypes.find(a => a.slug === activeCeoSlug)
   const activeCeo = ceos[activeCeoSlug]
@@ -70,11 +81,6 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
   const verb = EXECUTIZING_VERB[activeCeoSlug] ?? 'Thinking'
 
   const ceoStats = stats?.ceos.find(c => c.slug === activeCeoSlug)
-  const total = ceoStats?.total ?? 0
-  const adopted = ceoStats?.adopted ?? 0
-  const modified = ceoStats?.modified ?? 0
-  const rejected = ceoStats?.rejected ?? 0
-  const agreementRate = ceoStats ? Math.round(ceoStats.agreement_rate * 100) : null
 
   // Session token total — sum input+output across all responses in current session
   const sessionTokens = useMemo(() => {
@@ -94,17 +100,33 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
 
   const otherArchetypes = archetypes.filter(a => a.slug !== activeCeoSlug)
 
+  // Default to adjusted active (true); fall back to true when no feedback loaded yet
+  const isAdjustedActive = feedback?.active !== false
+
+  async function handleToggleActive() {
+    if (!feedback) return
+    try {
+      const updated = await setFeedbackActive(activeCeoSlug, !isAdjustedActive)
+      setFeedback(updated)
+    } catch {
+      // best-effort
+    }
+  }
+
   return (
     <div
       className="flex-shrink-0 border-b border-[#2A2A44] bg-[#12121A] overflow-hidden"
-      style={{ minHeight: '200px', maxHeight: '220px' }}
+      style={{ minHeight: '240px', maxHeight: '265px' }}
       role="banner"
       aria-label="Active CEO overview"
     >
       <div className="flex h-full">
-        {/* === LEFT 42% — portrait / autonomy / mini icons / blurb === */}
+        {/* === (1) PROFILE — portrait / autonomy / mini icons / blurb === */}
         <div className="flex flex-col" style={{ width: '42%', minWidth: '42%' }}>
-          <div className="flex flex-1 gap-3 px-4 pt-3 pb-2 overflow-hidden">
+          <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase px-4 pt-2 flex-shrink-0">
+            Profile
+          </p>
+          <div className="flex flex-1 gap-3 px-4 pt-1 pb-2 overflow-hidden">
 
             {/* Column A: portrait + name + autonomy buttons + mini icons */}
             <div className="flex flex-col items-center gap-1 flex-shrink-0">
@@ -226,18 +248,23 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
               </div>
             </div>
 
-            {/* Column B: blurb + one-liner + autonomy description */}
-            <div className="flex flex-col gap-2 flex-1 min-w-0 pt-1 justify-center">
-              {activeArchetype && (
-                <p className="font-mono text-xs leading-relaxed" style={{ color: `${accentColor}CC` }}>
-                  {activeArchetype.response_style_blurb}
+            {/* Column B: CEO identity (top) then autonomy description — both top-justified */}
+            <div className="flex flex-col flex-1 min-w-0 pt-1 gap-2">
+              {/* CEO identity — never moves */}
+              <div className="flex flex-col gap-1">
+                {activeArchetype && (
+                  <p className="font-mono text-xs leading-relaxed" style={{ color: `${accentColor}CC` }}>
+                    {activeArchetype.response_style_blurb}
+                  </p>
+                )}
+                <p className="font-mono text-[11px] text-[#8888AA]">
+                  {activeArchetype?.one_line}
                 </p>
-              )}
-              <p className="font-mono text-[11px] text-[#8888AA]">
-                {activeArchetype?.one_line}
-              </p>
+              </div>
+
+              {/* Autonomy description — sits directly below CEO text, top-justified */}
               {activeCeo && (
-                <div className="mt-1 border-t border-[#2A2A44] pt-1">
+                <div className="border-t border-[#2A2A44] pt-1">
                   <p className="font-mono text-[10px] text-[#8888AA] uppercase tracking-widest mb-0.5">
                     Level {activeCeo.autonomyLevel} — {AUTONOMY_LABELS[activeCeo.autonomyLevel]}
                   </p>
@@ -251,92 +278,53 @@ export function CeoHeroPanel({ archetypes, ceos, activeCeoSlug, config, onSelect
           </div>
         </div>
 
-        {/* === RIGHT 60% — three equal columns === */}
+        {/* === RIGHT 60% — three labeled equal columns === */}
         <div className="flex flex-1 border-l border-[#2A2A44] overflow-hidden divide-x divide-[#2A2A44]">
 
-          {/* Column 1 — Radar chart */}
-          <div className="flex-1 flex flex-col items-center justify-center p-2 min-w-0">
-            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase mb-1">
+          {/* (2) PERSONALITY — Radar chart */}
+          <div className="flex-1 flex flex-col p-2 min-w-0 overflow-hidden">
+            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase mb-1 flex-shrink-0">
               Personality
             </p>
             {activeArchetype && (
-              <RadarChart archetypes={[activeArchetype]} />
+              <RadarChart
+                archetypes={[activeArchetype]}
+                traitAdjustments={feedback?.trait_adjustments}
+                isAdjustedActive={isAdjustedActive}
+                onToggleActive={() => void handleToggleActive()}
+              />
             )}
           </div>
 
-          {/* Column 2 — Session stats (A/R/M) */}
-          <div className="flex-1 flex flex-col gap-2 p-3 min-w-0 justify-center">
-            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase">
-              Agreement
+          {/* (3) SCORECARD — Agreement + Feedback tabs */}
+          <div className="flex-1 flex flex-col p-2 min-w-0 overflow-hidden">
+            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase mb-1 flex-shrink-0">
+              Scorecard
             </p>
-            <div>
-              {agreementRate !== null ? (
-                <p className="font-mono text-3xl font-bold leading-none" style={{ color: accentColor }}>
-                  {agreementRate}%
-                </p>
-              ) : (
-                <p className="font-mono text-3xl font-bold leading-none text-[#444466]">—</p>
-              )}
-              <p className="font-mono text-xs text-[#8888AA] mt-0.5">
-                {total > 0 ? `${total} session${total !== 1 ? 's' : ''}` : 'no sessions yet'}
-              </p>
+            <div className="flex-1 overflow-hidden">
+              <ScorecardPanel
+                stats={ceoStats}
+                slug={activeCeoSlug}
+                feedback={feedback}
+                accentColor={accentColor}
+                onFeedbackUpdated={setFeedback}
+              />
             </div>
-            {total > 0 && (
-              <div className="flex flex-col gap-1.5">
-                {[
-                  { label: 'Adopted', count: adopted, color: '#7FFF00' },
-                  { label: 'Modified', count: modified, color: '#FFE600' },
-                  { label: 'Rejected', count: rejected, color: '#FF2D78' },
-                ].map(({ label, count, color }) => (
-                  <div key={label}>
-                    <div className="flex justify-between font-mono text-[10px] mb-0.5">
-                      <span style={{ color }}>{label}</span>
-                      <span className="text-[#8888AA]">
-                        {count} · {Math.round((count / total) * 100)}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 bg-[#1A1A2E] rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${(count / total) * 100}%`, backgroundColor: color }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
-          {/* Column 3 — API info */}
-          <div className="flex-1 flex flex-col gap-2 p-3 min-w-0 justify-center">
-            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase">
-              API
+          {/* (4) INTEGRATIONS — LLMs + Slack */}
+          <div className="flex-1 flex flex-col p-2 min-w-0 overflow-hidden">
+            <p className="font-mono text-[10px] text-[#8888AA] tracking-widest uppercase mb-1 flex-shrink-0">
+              Integrations
             </p>
-            <div className="font-mono space-y-2">
-              <div>
-                <p className="text-[#8888AA] text-[10px]">Provider</p>
-                <p className="text-[#F0F0FF] text-xs">{config.provider_name}</p>
-              </div>
-              <div>
-                <p className="text-[#8888AA] text-[10px]">Model</p>
-                <p className="text-[#F0F0FF] text-xs truncate" title={currentModel ?? undefined}>
-                  {currentModel ?? <span className="text-[#444466]">—</span>}
-                </p>
-              </div>
-              <div>
-                <p className="text-[#8888AA] text-[10px]">Session tokens</p>
-                <p className="text-[#F0F0FF] text-xs">
-                  {sessionTokens > 0
-                    ? sessionTokens.toLocaleString()
-                    : <span className="text-[#444466]">—</span>}
-                </p>
-              </div>
-              <div>
-                <p className="text-[#8888AA] text-[10px]">API key</p>
-                <p className={`text-xs ${config.api_key_set ? 'text-[#7FFF00]' : 'text-[#FF2D78]'}`}>
-                  {config.api_key_set ? '✓ set' : '✗ missing'}
-                </p>
-              </div>
+            <div className="flex-1 overflow-hidden">
+              <IntegrationsPanel
+                accentColor={accentColor}
+                currentModel={currentModel}
+                sessionTokens={sessionTokens}
+                providerName={config.provider_name}
+                apiKeySet={config.api_key_set}
+              />
             </div>
           </div>
 

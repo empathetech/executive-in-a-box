@@ -6,10 +6,8 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { ArtifactMeta, Job } from '../types/api'
-import type { CeoState, ChatMessage } from '../App'
-import { listArtifacts, listJobs, getArtifact, deleteArtifact, revealArtifact } from '../lib/api'
-import { ChatHistoryModal } from './ChatHistoryModal'
+import type { ArtifactMeta, Job, SessionRecord } from '../types/api'
+import { listArtifacts, listJobs, getArtifact, deleteArtifact, revealArtifact, listSessions } from '../lib/api'
 
 const ARCHETYPE_COLORS: Record<string, string> = {
   operator:  '#FF2D78',
@@ -23,7 +21,6 @@ type HistoryFilter = 'all' | 'adopted' | 'modified' | 'rejected' | 'unresolved'
 
 interface Props {
   artifacts: ArtifactMeta[]
-  ceos: Record<string, CeoState>
   onRefresh: (artifacts: ArtifactMeta[]) => void
   onOpenArtifact: (artifact: ArtifactMeta) => void
 }
@@ -106,6 +103,7 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
 }) {
   const [copyStates, setCopyStates] = useState<Record<string, boolean>>({})
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   async function handleCopy(artifact: ArtifactMeta) {
     try {
@@ -129,13 +127,14 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
   }
 
   async function handleDelete(artifact: ArtifactMeta) {
+    setDeleteError(null)
     try {
       await deleteArtifact(artifact.session_id, artifact.filename)
       const updated = await listArtifacts()
       onRefresh(updated)
-    } catch {
-      // silently fail
-    } finally {
+      setConfirmDelete(null)
+    } catch (e: unknown) {
+      setDeleteError(e instanceof Error ? e.message : 'Delete failed')
       setConfirmDelete(null)
     }
   }
@@ -156,6 +155,14 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
           ↻
         </button>
       </div>
+
+      {/* Error banner */}
+      {deleteError && (
+        <div className="px-3 py-1.5 border-b border-[#FF2D78] bg-[#FF2D7811] flex items-center justify-between flex-shrink-0">
+          <span className="font-mono text-[10px] text-[#FF2D78]">{deleteError}</span>
+          <button onClick={() => setDeleteError(null)} className="text-[#FF2D78] font-mono text-xs ml-2">×</button>
+        </div>
+      )}
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
@@ -232,32 +239,112 @@ function ArtifactsTabContent({ artifacts, onRefresh, onOpenArtifact }: {
 
 // ---- History Tab ----
 
-interface HistoryEntry {
-  ceoSlug: string
-  ceoName: string
-  msgIndex: number
-  msg: ChatMessage
+function decisionColor(d: string): string {
+  const lower = d.toLowerCase()
+  if (lower === 'adopted') return '#7FFF00'
+  if (lower === 'rejected') return '#FF2D78'
+  if (lower === 'modified') return '#FFE600'
+  return '#8888AA'
 }
 
-function HistoryTabContent({ ceos }: { ceos: Record<string, CeoState> }) {
+function decisionIcon(d: string): string {
+  const lower = d.toLowerCase()
+  if (lower === 'adopted') return '✓'
+  if (lower === 'rejected') return '✗'
+  if (lower === 'modified') return '~'
+  return '?'
+}
+
+function SessionDetailModal({ record, onClose }: { record: SessionRecord; onClose: () => void }) {
+  const accentColor = ARCHETYPE_COLORS[record.slug] ?? '#8888AA'
+  const slugLabel = record.slug.charAt(0).toUpperCase() + record.slug.slice(1)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#0A0A0F]/80"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="bg-[#12121A] border rounded w-[90vw] max-w-2xl max-h-[80vh] flex flex-col"
+        style={{ borderColor: `${accentColor}55` }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[#2A2A44] flex-shrink-0">
+          <div>
+            <span className="font-mono text-xs font-bold" style={{ color: accentColor }}>
+              {slugLabel}
+            </span>
+            {record.timestamp && (
+              <span className="font-mono text-[10px] text-[#8888AA] ml-2">{record.timestamp}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {record.decision && (
+              <span className="font-mono text-xs font-bold" style={{ color: decisionColor(record.decision) }}>
+                {decisionIcon(record.decision)} {record.decision}
+              </span>
+            )}
+            <button onClick={onClose} className="text-[#8888AA] hover:text-[#F0F0FF] font-mono text-sm transition-colors">×</button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4 font-mono text-sm space-y-4">
+          {record.question && (
+            <div>
+              <p className="text-[10px] text-[#8888AA] uppercase tracking-widest mb-1">Question</p>
+              <p className="text-[#F0F0FF] leading-relaxed">{record.question}</p>
+            </div>
+          )}
+          {record.position && (
+            <div>
+              <p className="text-[10px] text-[#8888AA] uppercase tracking-widest mb-1">Position</p>
+              <p className="text-[#F0F0FF] leading-relaxed whitespace-pre-wrap">{record.position}</p>
+            </div>
+          )}
+          {record.modification && (
+            <div>
+              <p className="text-[10px] text-[#FFE600] uppercase tracking-widest mb-1">Modification</p>
+              <p className="text-[#F0F0FF] leading-relaxed">{record.modification}</p>
+            </div>
+          )}
+          <div className="flex gap-4 text-[10px] text-[#8888AA]">
+            {record.confidence && <span>Confidence: <span className="text-[#F0F0FF]">{record.confidence}</span></span>}
+            {record.ambition_level && <span>Ambition: <span className="text-[#F0F0FF]">{record.ambition_level}</span></span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HistoryTabContent() {
+  const [sessions, setSessions] = useState<SessionRecord[]>([])
+  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<HistoryFilter>('all')
-  const [selectedEntry, setSelectedEntry] = useState<HistoryEntry | null>(null)
+  const [selected, setSelected] = useState<SessionRecord | null>(null)
 
-  // Collect all assistant messages with a response across all CEOs
-  const allEntries: HistoryEntry[] = []
-  for (const [slug, ceo] of Object.entries(ceos)) {
-    ceo.history.forEach((msg, i) => {
-      if (msg.role === 'assistant' && msg.response) {
-        allEntries.push({ ceoSlug: slug, ceoName: `The ${slug.charAt(0).toUpperCase()}${slug.slice(1)}`, msgIndex: i, msg })
-      }
-    })
-  }
+  useEffect(() => {
+    listSessions()
+      .then(setSessions)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
 
-  // Try to get ceo name from history entry more accurately
-  const filteredEntries = allEntries.filter(entry => {
+  const filtered = sessions.filter(s => {
+    const d = s.decision.toLowerCase()
     if (filter === 'all') return true
-    if (filter === 'unresolved') return !entry.msg.decision
-    return entry.msg.decision === filter
+    if (filter === 'unresolved') return !s.decision
+    return d === filter
   })
 
   const filterButtons: { key: HistoryFilter; label: string }[] = [
@@ -290,38 +377,46 @@ function HistoryTabContent({ ceos }: { ceos: Record<string, CeoState> }) {
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
-        {filteredEntries.length === 0 ? (
+        {loading ? (
+          <p className="text-[#8888AA] font-mono text-xs text-center mt-8 animate-pulse">Loading…</p>
+        ) : filtered.length === 0 ? (
           <p className="text-[#444466] font-mono text-xs text-center mt-8 px-4">
-            No history entries yet.
+            No sessions yet.
           </p>
         ) : (
           <ul role="list" className="py-1">
-            {filteredEntries.map((entry, i) => {
-              const accentColor = ARCHETYPE_COLORS[entry.ceoSlug] ?? '#8888AA'
-              const position = entry.msg.response?.position ?? entry.msg.content
+            {filtered.map((s) => {
+              const accentColor = ARCHETYPE_COLORS[s.slug] ?? '#8888AA'
               return (
-                <li key={i}>
+                <li key={s.id}>
                   <button
-                    onClick={() => setSelectedEntry(entry)}
+                    onClick={() => setSelected(s)}
                     className="w-full text-left px-3 py-2 hover:bg-[#1A1A2E] transition-colors border-b border-[#2A2A44] last:border-0"
-                    aria-label={`View response from ${entry.ceoName}`}
+                    aria-label={`View session: ${s.question || s.id}`}
                   >
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="font-mono text-[10px] font-bold" style={{ color: accentColor }}>
-                        {entry.ceoName.replace('The ', '')}
+                      <span className="font-mono text-[10px] font-bold capitalize" style={{ color: accentColor }}>
+                        {s.slug}
                       </span>
-                      {entry.msg.decision && (
-                        <span className={`font-mono text-[10px] ${
-                          entry.msg.decision === 'adopted' ? 'text-[#7FFF00]'
-                          : entry.msg.decision === 'rejected' ? 'text-[#FF2D78]'
-                          : 'text-[#FFE600]'
-                        }`}>
-                          {entry.msg.decision === 'adopted' ? '✓' : entry.msg.decision === 'rejected' ? '✗' : '~'}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {s.decision && (
+                          <span className="font-mono text-[10px]" style={{ color: decisionColor(s.decision) }}>
+                            {decisionIcon(s.decision)}
+                          </span>
+                        )}
+                        {s.timestamp && (
+                          <span className="font-mono text-[9px] text-[#444466]">
+                            {s.timestamp.slice(0, 10)}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <p className="font-mono text-[10px] text-[#8888AA] truncate leading-relaxed">
-                      {position.slice(0, 80)}{position.length > 80 ? '…' : ''}
+                    <p
+                      className="font-mono text-[10px] truncate leading-relaxed"
+                      style={{ color: s.decision ? decisionColor(s.decision) : '#8888AA' }}
+                    >
+                      {(s.question || s.position).slice(0, 80)}
+                      {(s.question || s.position).length > 80 ? '…' : ''}
                     </p>
                   </button>
                 </li>
@@ -331,14 +426,8 @@ function HistoryTabContent({ ceos }: { ceos: Record<string, CeoState> }) {
         )}
       </div>
 
-      {/* Modal */}
-      {selectedEntry && (
-        <ChatHistoryModal
-          msg={selectedEntry.msg}
-          ceoName={selectedEntry.ceoName}
-          accentColor={ARCHETYPE_COLORS[selectedEntry.ceoSlug] ?? '#8888AA'}
-          onClose={() => setSelectedEntry(null)}
-        />
+      {selected && (
+        <SessionDetailModal record={selected} onClose={() => setSelected(null)} />
       )}
     </div>
   )
@@ -346,7 +435,7 @@ function HistoryTabContent({ ceos }: { ceos: Record<string, CeoState> }) {
 
 // ---- Left Panel ----
 
-export function LeftPanel({ artifacts, ceos, onRefresh, onOpenArtifact }: Props) {
+export function LeftPanel({ artifacts, onRefresh, onOpenArtifact }: Props) {
   const [tab, setTab] = useState<Tab>('artifacts')
 
   useEffect(() => {
@@ -395,7 +484,7 @@ export function LeftPanel({ artifacts, ceos, onRefresh, onOpenArtifact }: Props)
           />
         )}
         {tab === 'jobs' && <JobsTabContent />}
-        {tab === 'history' && <HistoryTabContent ceos={ceos} />}
+        {tab === 'history' && <HistoryTabContent />}
       </div>
     </div>
   )

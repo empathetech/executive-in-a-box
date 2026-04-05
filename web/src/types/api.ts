@@ -29,6 +29,10 @@ export interface MessageRequest {
   message: string
   archetype_slug?: string
   executize?: boolean
+  modification_context?: {
+    original_position: string
+    feedback: string
+  }
 }
 
 export interface SessionResponse {
@@ -93,6 +97,42 @@ export interface AnnounceRequest {
   message: string
   webhook_id: string
   archetype_slug?: string
+}
+
+// ---- Session History ----
+
+export interface SessionRecord {
+  id: string
+  slug: string
+  timestamp: string
+  decision: string
+  question: string
+  position: string
+  confidence: string
+  ambition_level: string
+  modification: string
+}
+
+// ---- Feedback ----
+
+export interface FeedbackResponse {
+  slug: string
+  summary: string | null
+  trait_adjustments: Record<string, number>
+  system_prompt_addon: string | null
+  updated_at: string | null
+  decision_count: number
+  active: boolean   // true = inject system_prompt_addon into LLM requests
+}
+
+// ---- Integrations ----
+
+export interface LlmProvider {
+  slug: string
+  label: string
+  needs_key: boolean
+  key_set: boolean
+  active: boolean
 }
 
 // ---- Stats ----

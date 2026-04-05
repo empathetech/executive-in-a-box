@@ -24,10 +24,27 @@ from exec_in_a_box.wrapper import build_prompt, validate_response
 router = APIRouter(prefix="/api/session", tags=["session"])
 
 
+class ModificationContext(BaseModel):
+    original_position: str
+    feedback: str
+
+
 class MessageRequest(BaseModel):
     message: str
     archetype_slug: str | None = None  # defaults to configured archetype
     executize: bool = False
+    modification_context: ModificationContext | None = None
+
+
+def _build_modification_message(original_question: str, original_position: str, feedback: str) -> str:
+    """Construct the user message for a modify re-run."""
+    return (
+        f"I previously asked you:\n{original_question}\n\n"
+        f"Your response was:\n{original_position}\n\n"
+        f"I have feedback on this response:\n{feedback}\n\n"
+        "Please revise your position based on my feedback. "
+        "Use the same JSON response format."
+    )
 
 
 async def _run_llm(archetype_slug: str, message: str) -> dict:
@@ -46,6 +63,12 @@ async def _run_llm(archetype_slug: str, message: str) -> dict:
         raise ValueError(f"No API key for provider: {config.provider_name}")
 
     system_prompt, user_message, secret_matches = build_prompt(archetype, message)
+
+    # Inject feedback calibration if available — this is the grading feedback loop
+    from exec_in_a_box.server.routes.feedback import _load as _load_feedback
+    fb = _load_feedback(slug)
+    if fb and fb.get("active", True) and fb.get("system_prompt_addon"):
+        system_prompt = system_prompt + "\n\n" + fb["system_prompt_addon"]
 
     def _call():
         provider = create_provider(config.provider_name, api_key=api_key)
@@ -118,7 +141,17 @@ async def post_message(body: MessageRequest):
 
     # Direct (fast) path — run inline and return
     try:
-        result = await _run_llm(slug, body.message)
+        if body.modification_context:
+            effective_message = _build_modification_message(
+                body.message,
+                body.modification_context.original_position,
+                body.modification_context.feedback,
+            )
+        else:
+            effective_message = body.message
+        result = await _run_llm(slug, effective_message)
+        if body.modification_context:
+            result["is_modification"] = True
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -134,6 +167,8 @@ class DecisionRequest(BaseModel):
     ambition_level: str = ""
     decision: str  # "adopted" | "rejected" | "modified"
     modification: str | None = None
+    reason: str | None = None       # optional reason for adopt/reject
+    is_modification: bool = False   # true when this decision follows a Modify re-run
 
 
 @router.post("/decision")
@@ -170,6 +205,10 @@ def post_decision(body: DecisionRequest):
     ]
     if body.modification:
         lines += ["", f"**Modification:** {body.modification}"]
+    if body.reason:
+        lines += ["", f"**Reason:** {body.reason}"]
+    if body.is_modification:
+        lines += ["", "*(This was a revised response following a Modify re-run)*"]
     lines += ["", "---", ""]
 
     storage.append_file("org/decisions.md", "\n".join(lines))
@@ -185,6 +224,8 @@ def post_decision(body: DecisionRequest):
         "position": body.position,
         "confidence": body.confidence,
         "ambition_level": body.ambition_level,
+        "reason": body.reason or "",
+        "is_modification": body.is_modification,
     })
 
     return {"recorded": True, "decision": decision_text}
