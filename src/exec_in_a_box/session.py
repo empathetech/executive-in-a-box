@@ -108,76 +108,123 @@ def _get_decision(autonomy_level: int, has_slack: bool, allow_modify: bool = Tru
 
 
 def _send_to_slack(response: ValidatedResponse, config, archetype) -> None:
-    """Let user craft and send a message to Slack."""
+    """Let user pick, preview, edit, and send a Slack message."""
+    import re as _re
     from exec_in_a_box.slack import send_message
 
-    print()
-    print(colorize("  What would you like to send to Slack?", C.CYAN))
-    print()
-    print(colorize("  1. ", C.DIM) + "The recommendation as-is")
-    print(colorize("  2. ", C.DIM) + "Write a custom message")
-    print(colorize("  3. ", C.DIM) + "Cancel")
-    print()
+    # Extract <announce> blocks; fall back to full position if none.
+    blocks = [m.strip() for m in _re.findall(
+        r"<announce>([\s\S]*?)<\/announce>", response.position, _re.IGNORECASE
+    )]
 
-    choice = _input("  Pick [1-3]: ").strip()
-
-    if choice == "1":
-        import re as _re
-        _announce = _re.findall(r"<announce>([\s\S]*?)<\/announce>", response.position, _re.IGNORECASE)
-        message = "\n\n".join(m.strip() for m in _announce) if _announce else response.position
-    elif choice == "2":
+    def _pick_message() -> str | None:
+        """Return the chosen message text, or None to cancel."""
         print()
-        message = _input(colorize("  Message: ", C.CYAN)).strip()
+        print(colorize("  What would you like to send to Slack?", C.CYAN))
+        print()
+
+        options: list[tuple[str, str]] = []  # (label, text)
+
+        if blocks:
+            for i, block in enumerate(blocks, 1):
+                preview = block[:60].replace("\n", " ")
+                if len(block) > 60:
+                    preview += "…"
+                options.append((f"Announcement {i}", block))
+                print(colorize(f"  {i}. ", C.DIM) + f'"{preview}"')
+        else:
+            preview = response.position[:60].replace("\n", " ")
+            if len(response.position) > 60:
+                preview += "…"
+            options.append(("Full position", response.position))
+            print(colorize("  1. ", C.DIM) + f'"{preview}"')
+
+        n = len(options)
+        print(colorize(f"  {n + 1}. ", C.DIM) + "Write a custom message")
+        print(colorize(f"  {n + 2}. ", C.DIM) + "Cancel")
+        print()
+
+        raw = _input(f"  Pick [1-{n + 2}]: ").strip()
+        try:
+            idx = int(raw)
+        except ValueError:
+            return None
+
+        if idx == n + 2:
+            return None
+        if idx == n + 1:
+            print()
+            msg = _input(colorize("  Message: ", C.CYAN)).strip()
+            return msg if msg else None
+        if 1 <= idx <= n:
+            return options[idx - 1][1]
+        return None
+
+    def _preview_and_confirm(message: str) -> str | None:
+        """Show preview loop. Returns final message to send, or None to cancel."""
+        while True:
+            print()
+            print(colorize("  ─── Preview ───", C.DIM))
+            for line in message.splitlines():
+                print(f"  {line}")
+            print(colorize("  ───────────────", C.DIM))
+            print()
+
+            has_multiple = len(blocks) > 1
+            prompt = (
+                colorize("  Send to Slack? ", C.DIM)
+                + colorize("[S]end", C.LIME)
+                + colorize(" / ", C.DIM)
+                + colorize("[E]dit", C.YELLOW)
+            )
+            if has_multiple:
+                prompt += colorize(" / ", C.DIM) + colorize("[P]ick another", C.CYAN)
+            prompt += colorize(" / ", C.DIM) + colorize("[C]ancel", C.MAGENTA) + colorize(": ", C.DIM)
+
+            confirm = _input(prompt).strip().lower()
+
+            if confirm in ("s", "send", "y", "yes"):
+                return message
+            if confirm in ("e", "edit"):
+                print()
+                print(colorize("  Edit message (leave blank to keep current):", C.DIM))
+                # Show current text line by line with a prompt
+                edited = _input(colorize("  > ", C.CYAN)).strip()
+                if edited:
+                    message = edited
+                # Loop back to re-preview
+                continue
+            if has_multiple and confirm in ("p", "pick"):
+                return "PICK_AGAIN"
+            return None  # Cancel
+
+    # Main loop — allows re-picking if user selects [P]ick another
+    while True:
+        message = _pick_message()
         if not message:
-            print(colorize("  Empty message. Cancelled.", C.DIM))
+            print(colorize("  Cancelled.", C.DIM))
+            print()
             return
-    else:
-        print(colorize("  Cancelled.", C.DIM))
-        return
 
-    # Always preview before sending (enforced in BUSINESS_LOGIC.md)
-    print()
-    print(colorize("  ─── Preview ───", C.DIM))
-    print(f"  {message}")
-    print(colorize("  ───────────────", C.DIM))
-    print()
-    confirm = _input(
-        colorize("  Send to Slack? ", C.DIM)
-        + colorize("[Y]es", C.LIME)
-        + colorize(" / ", C.DIM)
-        + colorize("[E]dit", C.YELLOW)
-        + colorize(" / ", C.DIM)
-        + colorize("[C]ancel", C.MAGENTA)
-        + colorize(": ", C.DIM)
-    ).strip().lower()
-
-    if confirm in ("e", "edit"):
-        message = _input(colorize("  Corrected message: ", C.CYAN)).strip()
-        if not message:
-            print(colorize("  Empty message. Cancelled.", C.DIM))
+        result = _preview_and_confirm(message)
+        if result == "PICK_AGAIN":
+            continue
+        if not result:
+            print(colorize("  Cancelled.", C.DIM))
+            print()
             return
-        print()
-        print(colorize("  ─── Preview ───", C.DIM))
-        print(f"  {message}")
-        print(colorize("  ───────────────", C.DIM))
-        print()
-        confirm = _input(
-            colorize("  Send to Slack? [Y/N]: ", C.DIM)
-        ).strip().lower()
 
-    if confirm not in ("y", "yes"):
-        print(colorize("  Cancelled.", C.DIM))
+        print()
+        print(colorize("  Sending to Slack...", C.CYAN), end=" ", flush=True)
+        success = send_message(
+            result,
+            archetype_slug=config.archetype_slug,
+            archetype_name=archetype.name,
+        )
+        if success:
+            print(colorize("Sent!", C.LIME))
+        print()
         return
-
-    print(colorize("  Sending to Slack...", C.CYAN), end=" ", flush=True)
-    success = send_message(
-        message,
-        archetype_slug=config.archetype_slug,
-        archetype_name=archetype.name,
-    )
-    if success:
-        print(colorize("Sent!", C.LIME))
-    print()
 
 
 def _log_decision(

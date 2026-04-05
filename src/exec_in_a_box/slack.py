@@ -356,82 +356,107 @@ def run_slack_command(args: list[str]) -> None:
         chosen_webhook = flat[widx]
 
         # ── Step 3: Compose message ───────────────────────────────────────
-        print()
-        print("  What do you want to send?")
-        print()
-        print("  1. Write a message")
+        import re as _re
 
-        # Last session position comes from the session index (reliable vs. markdown parsing)
+        # Gather <announce> blocks from last session if available
         index = _storage.read_session_index()
         last_record = index[-1] if index else None
-        has_last = bool(last_record and last_record.get("position"))
-
-        if has_last:
-            print("  2. Use last session's position")
-            print("  3. Cancel")
-        else:
-            print("  2. Cancel")
-        print()
-
-        choice = input("  Pick: ").strip()
-
-        if choice == "1":
-            print()
-            message = input("  Message: ").strip()
-            if not message:
-                print("  Empty message. Cancelled.")
-                return
-        elif choice == "2" and has_last:
-            # Strip <announce> tags if present, otherwise use full position
-            import re as _re
+        last_blocks: list[str] = []
+        if last_record and last_record.get("position"):
             raw_pos = last_record["position"]
-            announce_matches = _re.findall(r"<announce>([\s\S]*?)<\/announce>", raw_pos, _re.IGNORECASE)
-            message = "\n\n".join(m.strip() for m in announce_matches) if announce_matches else raw_pos
-            if not message:
-                print("  Couldn't find a position in the last session. Cancelled.")
+            found = [m.strip() for m in _re.findall(
+                r"<announce>([\s\S]*?)<\/announce>", raw_pos, _re.IGNORECASE
+            )]
+            last_blocks = found if found else [raw_pos]
+
+        def _pick_message() -> str | None:
+            print()
+            print("  What do you want to send?")
+            print()
+            options: list[str] = []
+            if last_blocks:
+                for i, block in enumerate(last_blocks, 1):
+                    preview = block[:60].replace("\n", " ")
+                    if len(block) > 60:
+                        preview += "…"
+                    label = f"Announcement {i}" if len(last_blocks) > 1 else "Last session's position"
+                    options.append(block)
+                    print(f"  {len(options)}. {label}: \"{preview}\"")
+            n = len(options)
+            print(f"  {n + 1}. Write a message")
+            print(f"  {n + 2}. Cancel")
+            print()
+            raw = input(f"  Pick [1-{n + 2}]: ").strip()
+            try:
+                idx = int(raw)
+            except ValueError:
+                return None
+            if idx == n + 2:
+                return None
+            if idx == n + 1:
+                print()
+                msg = input("  Message: ").strip()
+                return msg if msg else None
+            if 1 <= idx <= n:
+                return options[idx - 1]
+            return None
+
+        def _preview_and_confirm(message: str) -> str | None:
+            """Preview loop. Returns message to send or None to cancel."""
+            sep = "─" * (len(archetype.name) + 16)
+            while True:
+                print()
+                print(f"  ─── Preview ({archetype.name}) ───")
+                for line in message.splitlines():
+                    print(f"  {line}")
+                print(f"  {sep}")
+                print()
+
+                prompt = "  Send to Slack? [S]end / [E]dit"
+                if len(last_blocks) > 1:
+                    prompt += " / [P]ick another"
+                prompt += " / [C]ancel: "
+                confirm = input(prompt).strip().lower()
+
+                if confirm in ("s", "send", "y", "yes"):
+                    return message
+                if confirm in ("e", "edit"):
+                    print()
+                    edited = input("  Edit message: ").strip()
+                    if edited:
+                        message = edited
+                    continue
+                if len(last_blocks) > 1 and confirm in ("p", "pick"):
+                    return "PICK_AGAIN"
+                return None
+
+        # Main loop
+        while True:
+            message = _pick_message()
+            if message is None:
+                print("  Cancelled.")
                 return
-        else:
-            print("  Cancelled.")
-            return
 
-        # ── Step 4: Preview ───────────────────────────────────────────────
-        print()
-        print(f"  ─── Preview ({archetype.name}) ───")
-        print(f"  {message}")
-        print("  " + "─" * (len(archetype.name) + 16))
-        print()
-
-        confirm = input("  Send to Slack? [Y]es / [E]dit / [C]ancel: ").strip().lower()
-
-        if confirm in ("e", "edit"):
-            print()
-            message = input("  Corrected message: ").strip()
-            if not message:
-                print("  Empty message. Cancelled.")
+            result = _preview_and_confirm(message)
+            if result == "PICK_AGAIN":
+                continue
+            if result is None:
+                print("  Cancelled.")
                 return
-            print()
-            print(f"  ─── Preview ({archetype.name}) ───")
-            print(f"  {message}")
-            print("  " + "─" * (len(archetype.name) + 16))
-            print()
-            confirm = input("  Send to Slack? [Y/N]: ").strip().lower()
 
-        if confirm not in ("y", "yes"):
-            print("  Cancelled.")
+            # ── Step 5: Send ─────────────────────────────────────────────
+            print()
+            print("  Sending...", end=" ", flush=True)
+            success = send_message(
+                result,
+                webhook_id=chosen_webhook["id"],
+                archetype_slug=archetype.slug,
+                archetype_name=archetype.name,
+            )
+            if success:
+                print("Sent!")
+            print()
             return
-
-        # ── Step 5: Send ──────────────────────────────────────────────────
-        print()
-        print("  Sending...", end=" ", flush=True)
-        success = send_message(
-            message,
-            webhook_id=chosen_webhook["id"],
-            archetype_slug=archetype.slug,
-            archetype_name=archetype.name,
-        )
-        if success:
-            print("Sent!")
-        print()
 
     except (EOFError, KeyboardInterrupt):
         print("\n  Cancelled.")
