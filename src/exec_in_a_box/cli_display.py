@@ -124,7 +124,14 @@ def print_banner() -> None:
     print(divider())
 
 
-def print_ceo_header(archetype_name: str, autonomy_level: int, provider: str) -> None:
+def print_ceo_header(
+    archetype_name: str,
+    autonomy_level: int,
+    provider: str,
+    one_line: str = "",
+    response_style_blurb: str = "",
+    feedback: "dict | None" = None,
+) -> None:
     """Print the active CEO info line."""
     level_label = {1: "Advisor", 2: "Recommender", 3: "Delegated", 4: "Autonomous"}
     print()
@@ -133,10 +140,26 @@ def print_ceo_header(archetype_name: str, autonomy_level: int, provider: str) ->
         + colorize(f"  ·  Level {autonomy_level} ({level_label.get(autonomy_level, '?')})", C.DIM)
         + colorize(f"  ·  {provider}", C.DIM)
     )
+    if one_line:
+        print(colorize(f"  {one_line}", C.DIM))
+    if response_style_blurb:
+        print(colorize(f"  Style: {response_style_blurb}", C.DIM))
+    if feedback and feedback.get("summary"):
+        active = feedback.get("active", True)
+        mode = colorize("● Adjusted", C.LIME) if active else colorize("○ Baseline", C.DIM)
+        summary_preview = feedback["summary"][:72]
+        if len(feedback["summary"]) > 72:
+            summary_preview += "…"
+        print(
+            colorize("  Feedback: ", C.DIM)
+            + mode
+            + colorize(f'  "{summary_preview}"', C.DIM)
+        )
     print(divider())
     print(
         colorize("  Commands: ", C.DIM)
-        + colorize("/switch", C.CYAN) + colorize(" (change CEO)  ", C.DIM)
+        + colorize("/switch", C.CYAN) + colorize(" (CEO)  ", C.DIM)
+        + colorize("/feedback", C.CYAN) + colorize(" (calibration)  ", C.DIM)
         + colorize("/executize", C.CYAN) + colorize(" (deep work)  ", C.DIM)
         + colorize("/quit", C.CYAN) + colorize(" (exit)", C.DIM)
     )

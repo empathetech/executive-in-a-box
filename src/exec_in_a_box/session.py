@@ -110,7 +110,33 @@ def _get_decision(autonomy_level: int, has_slack: bool, allow_modify: bool = Tru
 def _send_to_slack(response: ValidatedResponse, config, archetype) -> None:
     """Let user pick, preview, edit, and send a Slack message."""
     import re as _re
-    from exec_in_a_box.slack import send_message
+    from exec_in_a_box.slack import list_webhooks, send_message
+
+    # ── Step 1: Pick webhook (only shown when multiple are configured) ────
+    webhooks = list_webhooks()
+    if not webhooks:
+        print(colorize("\n  No Slack webhooks configured. Run: exec-in-a-box slack setup\n", C.DIM))
+        return
+
+    chosen_webhook_id: str | None = None
+    if len(webhooks) > 1:
+        print()
+        print(colorize("  Which channel?", C.CYAN))
+        print()
+        for i, w in enumerate(webhooks, 1):
+            print(colorize(f"  {i}. ", C.DIM) + f"{w.get('workspace', '?')} / {w.get('channel', '?')}")
+        print()
+        raw = _input(f"  Pick [1-{len(webhooks)}]: ").strip()
+        try:
+            widx = int(raw) - 1
+            if not (0 <= widx < len(webhooks)):
+                raise ValueError
+            chosen_webhook_id = webhooks[widx]["id"]
+        except (ValueError, KeyError):
+            print(colorize("  Invalid choice. Cancelled.", C.DIM))
+            return
+    else:
+        chosen_webhook_id = webhooks[0]["id"]
 
     # Extract <announce> blocks; fall back to full position if none.
     blocks = [m.strip() for m in _re.findall(
@@ -218,6 +244,7 @@ def _send_to_slack(response: ValidatedResponse, config, archetype) -> None:
         print(colorize("  Sending to Slack...", C.CYAN), end=" ", flush=True)
         success = send_message(
             result,
+            webhook_id=chosen_webhook_id,
             archetype_slug=config.archetype_slug,
             archetype_name=archetype.name,
         )
@@ -429,8 +456,19 @@ def run_session(initial_slug: Optional[str] = None) -> None:
     # Active background jobs: {job_id: archetype_slug}
     active_jobs: dict[str, str] = {}
 
+    def _show_ceo_header() -> None:
+        fb = _load_feedback(active_slug)
+        print_ceo_header(
+            archetype.name,
+            effective_level,
+            config.provider_name,
+            one_line=archetype.one_line,
+            response_style_blurb=getattr(archetype, "response_style_blurb", ""),
+            feedback=fb,
+        )
+
     print_banner()
-    print_ceo_header(archetype.name, effective_level, config.provider_name)
+    _show_ceo_header()
 
     while True:
         # Check for completed jobs before each prompt
@@ -486,8 +524,54 @@ def run_session(initial_slug: Optional[str] = None) -> None:
                 if new_arch:
                     archetype = new_arch
                     active_slug = new_slug
-                    print(colorize(f"\n  Switched to {archetype.name}.", C.LIME))
-                    print(divider())
+                    _show_ceo_header()
+            continue
+
+        if question.lower().startswith("/feedback"):
+            # Inline feedback view + toggle
+            fb = _load_feedback(active_slug)
+            parts = question.split(None, 1)
+            sub = parts[1].strip().lower() if len(parts) > 1 else ""
+
+            if sub == "toggle":
+                if fb is None:
+                    print(colorize("\n  No feedback yet. Run: exec-in-a-box feedback refresh\n", C.DIM))
+                else:
+                    from exec_in_a_box.server.routes.feedback import _save
+                    fb["active"] = not fb.get("active", True)
+                    _save(active_slug, fb)
+                    state = colorize("Adjusted", C.LIME) if fb["active"] else colorize("Baseline", C.DIM)
+                    print(colorize(f"\n  {archetype.name} → {state}\n", C.BOLD))
+            else:
+                # Show summary + trait modifiers
+                print()
+                print(colorize(f"  Feedback — {archetype.name}", C.BOLD, C.CYAN))
+                print()
+                if fb and fb.get("summary"):
+                    active_flag = fb.get("active", True)
+                    mode = colorize("● Adjusted active", C.LIME) if active_flag else colorize("○ Baseline active", C.DIM)
+                    print(colorize("  Summary: ", C.DIM) + f'"{fb["summary"]}"')
+                    print(colorize("  Mode:    ", C.DIM) + mode)
+                    adj = fb.get("trait_adjustments", {})
+                    nonzero = {t: v for t, v in adj.items() if abs(v) > 0.001}
+                    if nonzero:
+                        from exec_in_a_box.archetypes import TRAIT_LABELS
+                        print()
+                        for trait in TRAIT_LABELS:
+                            delta = adj.get(trait, 0.0)
+                            if abs(delta) < 0.001:
+                                continue
+                            sign_color = C.LIME if delta > 0 else C.MAGENTA
+                            print(
+                                colorize(f"    {trait:<22}", C.DIM)
+                                + colorize(f"{delta:+.2f}", sign_color)
+                            )
+                    print()
+                    print(colorize("  /feedback toggle", C.CYAN) + colorize(" — switch mode", C.DIM))
+                else:
+                    print(colorize("  No feedback synthesized yet.", C.DIM))
+                    print(colorize("  Run: exec-in-a-box feedback refresh", C.DIM))
+                print()
             continue
 
         if question.lower().startswith("/executize"):

@@ -29,20 +29,22 @@ listed under *Intentional Divergences*. When in doubt, add it both places.
 | Job status polling | ✅ checked before each prompt | ✅ SSE stream in ChatPanel | CLI is poll-based |
 | **Slack** | | | |
 | Announce from session/decision | ✅ S option → `_send_to_slack` | ✅ Announce button → AnnounceModal | |
-| Webhook selection when multiple | ✅ numbered list in `_send_to_slack` | ✅ workspace+channel dropdowns | |
-| Default webhook pre-selected | ✅ highlighted in `_send_to_slack` | ✅ `getSlackDefault()` in AnnounceModal | |
+| Webhook selection when multiple | ✅ numbered list in `_send_to_slack` + `run_slack_command` | ✅ workspace+channel dropdowns | |
+| Default webhook pre-selected | ✅ single webhook auto-selected | ✅ `getSlackDefault()` in AnnounceModal | |
 | Preview before send | ✅ preview step in both flows | ✅ Preview button in AnnounceModal | |
-| Edit message before send | ✅ E option in both flows | ✅ editable textarea in AnnounceModal | |
+| Edit message before send | ✅ [E]dit in both flows, loops back to preview | ✅ editable textarea in AnnounceModal | |
+| Pick between multiple announce blocks | ✅ numbered picker in both flows, [P]ick another at preview | ✅ prefill joined from `matchAll` | |
 | Standalone announce command | ✅ `exec-in-a-box slack` | ✅ Announce button in DecisionBar | |
-| Use last session's position | ✅ option 2 in `run_slack_command` (via session index) | ✅ prefilled from `response.position` | |
-| Extract `<announce>` tags | ✅ `run_slack_command` step 3 hint | ✅ `matchAll` in DecisionBar | |
+| Use last session's position | ✅ option in `run_slack_command` (via session index) | ✅ prefilled from `response.position` | |
+| Extract `<announce>` tags | ✅ both `_send_to_slack` and `run_slack_command` | ✅ `matchAll` in DecisionBar | |
 | Webhook setup | ✅ `exec-in-a-box slack setup` | ❌ read-only in Integrations panel | by design — keys via CLI only |
 | **CEO Personality / Profile** | | | |
-| Archetype name + one-liner | ✅ in `stats` command | ✅ hero panel profile column | |
-| Response style blurb | ❌ not shown | ✅ hero panel profile column | add to `stats` / session header |
+| Archetype name + one-liner | ✅ session header + `stats` command | ✅ hero panel profile column | |
+| Response style blurb | ✅ session header | ✅ hero panel profile column | |
 | Personality traits bar chart | ✅ `stats` command | ✅ RadarChart in hero panel | |
-| Feedback trait adjustments display | ✅ `feedback show` (bar chart + ±delta per trait) | ✅ RadarChart adjusted overlay | visual equivalent exists |
-| Baseline vs adjusted toggle | ✅ `feedback toggle` | ✅ toggle button below radar | |
+| Feedback summary in session | ✅ session header (mode + summary preview) | ✅ ScorecardPanel Feedback tab | |
+| Feedback trait adjustments display | ✅ `feedback show` + `/feedback` in-session (±delta per trait) | ✅ RadarChart adjusted overlay | visual equivalent exists |
+| Baseline vs adjusted toggle | ✅ `/feedback toggle` in-session + `feedback toggle` command | ✅ toggle button below radar | |
 | Autonomy level display | ✅ `config autonomy` + session header | ✅ autonomy buttons in hero panel | |
 | Autonomy level change | ✅ `exec-in-a-box config autonomy` | ✅ autonomy buttons (levels 1–2) | |
 | Provider / model display | ✅ session header + `config show` | ✅ Integrations panel | |
@@ -104,13 +106,11 @@ These features exist in only one interface **by design** and do not need to be p
 ### P1 — Fix now
 | Gap | File to change |
 |-----|----------------|
-| `artifacts delete` command missing in CLI | `__main__.py` |
 | `history --filter` flag missing in CLI | `__main__.py` |
 
 ### P2 — Fix soon
 | Gap | File to change |
 |-----|----------------|
-| `response_style_blurb` not shown in CLI `stats` or session header | `__main__.py`, `cli_display.py` |
 | `history --id` flag for full session detail view | `__main__.py` |
 
 ### P3 — Nice to have
