@@ -122,12 +122,26 @@ These features exist in only one interface **by design** and do not need to be p
 
 ---
 
+## Source of Truth
+
+**The web app is the source of truth.** When the web and CLI diverge and it's
+ambiguous which is correct, the web wins. Port web behavior to the CLI, not the
+reverse.
+
+Rationale: the web is the more actively developed interface. Design decisions
+made there (UX flows, formatting, option ordering, copy) should be treated as
+authoritative.
+
+---
+
 ## Parity Check Protocol
 
 When you change a feature in **either** interface:
 
 1. Find the feature in the table above.
-2. If the other interface is `✅`, update it to match the change.
+2. If the other interface is `✅`, update it to match the change. When porting
+   from CLI → web, use web idioms (dropdowns, buttons). When porting web → CLI,
+   use numbered menus and ANSI formatting equivalents.
 3. If the other interface is `❌` and the feature is not in *Intentional Divergences*, implement it.
 4. Update this table to reflect the new state.
 5. If you're unsure whether something should be ported, add it to *Known Gaps* rather than leaving it undocumented.
