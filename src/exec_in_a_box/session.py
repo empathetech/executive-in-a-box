@@ -697,10 +697,13 @@ def run_session(initial_slug: Optional[str] = None) -> None:
         # Track whether we are in a modification revision cycle (Y/N only).
         current_result = result
         is_modification_cycle = False
+        slack_sent = False  # hide S option after a successful send
 
         while True:
             decision = _get_decision(
-                effective_level, has_slack, allow_modify=not is_modification_cycle
+                effective_level,
+                has_slack and not slack_sent,
+                allow_modify=not is_modification_cycle,
             )
 
             if decision == "h":
@@ -719,6 +722,7 @@ def run_session(initial_slug: Optional[str] = None) -> None:
 
             if decision == "s":
                 _send_to_slack(current_result, config, archetype)
+                slack_sent = True
                 continue
 
             if decision == "m":
