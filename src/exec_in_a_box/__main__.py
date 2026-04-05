@@ -5,6 +5,22 @@ import sys
 
 from exec_in_a_box import __version__
 
+# Shared across stats, feedback, and session display
+_CEO_COLORS: dict[str, str] | None = None
+
+
+def _get_ceo_colors() -> dict[str, str]:
+    global _CEO_COLORS
+    if _CEO_COLORS is None:
+        from exec_in_a_box.cli_display import C
+        _CEO_COLORS = {
+            "operator":  C.CYAN,
+            "visionary": C.MAGENTA,
+            "advocate":  C.LIME,
+            "analyst":   C.YELLOW,
+        }
+    return _CEO_COLORS
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -110,6 +126,13 @@ def build_parser() -> argparse.ArgumentParser:
         "open", help="Print an artifact to stdout"
     )
     artifacts_open.add_argument(
+        "artifact_id",
+        help='Artifact ID in "session-id/filename" format',
+    )
+    artifacts_delete = artifacts_subparsers.add_parser(
+        "delete", help="Delete an artifact"
+    )
+    artifacts_delete.add_argument(
         "artifact_id",
         help='Artifact ID in "session-id/filename" format',
     )
@@ -523,6 +546,7 @@ def cmd_feedback(slug: str | None, action: str) -> None:
     DECISION_COLORS = {"adopted": C.LIME, "rejected": C.MAGENTA, "modified": C.YELLOW}
 
     if action == "show":
+        from exec_in_a_box.archetypes import TRAIT_LABELS
         data = _load(slug)
         decisions = _recent_decisions(slug)
         print()
@@ -535,9 +559,36 @@ def cmd_feedback(slug: str | None, action: str) -> None:
             print(colorize("  Status:  ", C.DIM) + status)
             if data.get("updated_at"):
                 print(colorize(f"  Updated: {data['updated_at'][:10]}", C.DIM))
+
+            # Trait adjustments
+            adj = data.get("trait_adjustments", {})
+            nonzero = {t: v for t, v in adj.items() if abs(v) > 0.001}
+            if nonzero:
+                BAR_W = 14
+                print()
+                print(colorize("  Trait modifiers (adjusted vs. baseline):", C.DIM))
+                print()
+                color = _get_ceo_colors().get(slug, C.WHITE)
+                for trait in TRAIT_LABELS:
+                    base = archetype.traits.get(trait, 0.0)
+                    delta = adj.get(trait, 0.0)
+                    adjusted = max(0.0, min(1.0, base + delta))
+                    filled = round(adjusted * BAR_W)
+                    bar = "█" * filled + "░" * (BAR_W - filled)
+                    delta_str = f"{delta:+.2f}" if delta != 0 else " 0.00"
+                    delta_color = C.LIME if delta > 0.001 else (C.MAGENTA if delta < -0.001 else C.DIM)
+                    print(
+                        colorize(f"    {trait:<22}", C.DIM)
+                        + colorize(bar, color)
+                        + colorize(f" {round(adjusted * 100):>3}%  ", C.DIM)
+                        + colorize(delta_str, delta_color)
+                    )
+                print()
+            else:
+                print()
         else:
             print(colorize("  No feedback synthesized yet.", C.DIM))
-        print()
+            print()
         print(colorize(f"  {len(decisions)} decision(s) in history:", C.DIM))
         for rec in decisions[:5]:
             d = rec.get("decision", "").lower()
@@ -735,6 +786,42 @@ def cmd_artifacts_list() -> None:
     print()
 
 
+def cmd_artifacts_delete(artifact_id: str) -> None:
+    from exec_in_a_box import storage
+    from exec_in_a_box.cli_display import C, colorize, print_error
+
+    parts = artifact_id.strip("/").split("/")
+    if len(parts) != 2:
+        print_error('Artifact ID must be "session-id/filename". Run: exec-in-a-box artifacts list')
+        return
+
+    session_id, filename = parts
+    path = storage.get_data_dir() / "artifacts" / session_id / filename
+    if not path.exists():
+        print_error(f"Artifact not found: {artifact_id}")
+        return
+
+    confirm = input(
+        colorize(f"  Delete {artifact_id}? ", C.DIM)
+        + colorize("[Y]es", C.MAGENTA)
+        + colorize(" / ", C.DIM)
+        + colorize("[N]o", C.DIM)
+        + colorize(": ", C.DIM)
+    ).strip().lower()
+
+    if confirm not in ("y", "yes"):
+        print(colorize("  Cancelled.", C.DIM))
+        return
+
+    path.unlink()
+    # Remove parent dir if now empty
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+    print(colorize(f"\n  Deleted: {artifact_id}\n", C.LIME))
+
+
 def cmd_artifacts_open(artifact_id: str) -> None:
     from exec_in_a_box import storage
     from exec_in_a_box.cli_display import print_error
@@ -771,12 +858,7 @@ def cmd_stats() -> None:
     print(divider())
 
     BAR_W = 20
-    CEO_COLORS = {
-        "operator":  C.CYAN,
-        "visionary": C.MAGENTA,
-        "advocate":  C.LIME,
-        "analyst":   C.YELLOW,
-    }
+    CEO_COLORS = _get_ceo_colors()
 
     # ── General usage ───────────────────────────────────────────────────────
     print()
@@ -1008,6 +1090,8 @@ def main() -> None:
             cmd_artifacts_list()
         elif args.artifacts_command == "open":
             cmd_artifacts_open(args.artifact_id)
+        elif args.artifacts_command == "delete":
+            cmd_artifacts_delete(args.artifact_id)
         else:
             parser.parse_args(["artifacts", "--help"])
         return

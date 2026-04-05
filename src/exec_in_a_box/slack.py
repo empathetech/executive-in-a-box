@@ -361,10 +361,13 @@ def run_slack_command(args: list[str]) -> None:
         print()
         print("  1. Write a message")
 
-        sessions = _storage.list_sessions()
-        has_last = bool(sessions)
+        # Last session position comes from the session index (reliable vs. markdown parsing)
+        index = _storage.read_session_index()
+        last_record = index[-1] if index else None
+        has_last = bool(last_record and last_record.get("position"))
+
         if has_last:
-            print("  2. Use last session's recommendation")
+            print("  2. Use last session's position")
             print("  3. Cancel")
         else:
             print("  2. Cancel")
@@ -379,14 +382,13 @@ def run_slack_command(args: list[str]) -> None:
                 print("  Empty message. Cancelled.")
                 return
         elif choice == "2" and has_last:
-            content = sessions[0].read_text(encoding="utf-8")
-            message = None
-            for line in content.splitlines():
-                if line.startswith("**Position:**"):
-                    message = line.replace("**Position:**", "").strip()
-                    break
+            # Strip <announce> tags if present, otherwise use full position
+            import re as _re
+            raw_pos = last_record["position"]
+            announce_matches = _re.findall(r"<announce>([\s\S]*?)<\/announce>", raw_pos, _re.IGNORECASE)
+            message = "\n\n".join(m.strip() for m in announce_matches) if announce_matches else raw_pos
             if not message:
-                print("  Couldn't find a recommendation in the last session. Cancelled.")
+                print("  Couldn't find a position in the last session. Cancelled.")
                 return
         else:
             print("  Cancelled.")

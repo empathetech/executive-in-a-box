@@ -354,6 +354,64 @@ exec-in-a-box config autonomy --ceo operator --level 2
 
 ---
 
+## Journey 6b: Feedback Calibration (Scoring and Modifiers)
+
+After enough decisions accumulate, the user calibrates the CEO's future behavior
+by synthesizing feedback. This adjusts per-trait scoring weights that get injected
+into future prompts.
+
+### Web App
+
+```
+[User opens ScorecardPanel → Feedback tab]
+  Shows: current feedback summary text, active/baseline status, trait modifier radar overlay
+        |
+        v
+[User clicks ↻ Update Feedback]
+  LLM synthesizes from all decisions for this CEO.
+  New summary + trait_adjustments (±0.3 per axis) saved.
+  RadarChart updates: adjusted overlay shown in complementary color.
+        |
+        v
+[User reviews feedback]
+  Toggle button below radar: "◈ Adjusted Active" / "◇ Baseline Active"
+  Toggle state saved — controls whether adjustments inject into future prompts.
+  Reset clears feedback and reverts to baseline.
+```
+
+### CLI
+
+```
+exec-in-a-box feedback show [slug]
+  Prints: summary, active/baseline status, last updated
+  Trait modifiers bar chart: each trait with adjusted score + ±delta colored by direction
+  Recent decisions list (last 5)
+
+exec-in-a-box feedback refresh [slug]
+  Synthesizes from decisions → updates summary + trait_adjustments
+  Prints updated summary and active state
+
+exec-in-a-box feedback toggle [slug]
+  Flips active/baseline — controls prompt injection for future sessions
+
+exec-in-a-box feedback reset [slug]
+  Clears all feedback, reverts to archetype baseline
+```
+
+### Claude Skill
+
+```
+(Not yet implemented — deferred to future milestone)
+```
+
+**Guardrails (all interfaces):**
+- Synthesis requires at least one decision; if none exist, user is told to make decisions first
+- Trait adjustments clamped to ±0.3 per axis; LLM cannot exceed this range
+- Toggle state persists between sessions; default is active (adjusted)
+- Reset is irreversible — no undo
+
+---
+
 ## Journey 7: All-Hands Meeting Facilitation
 
 (V1 feature — not available in current release.)
