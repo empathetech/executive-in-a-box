@@ -15,7 +15,7 @@ from pathlib import Path
 DEFAULT_DATA_DIR = Path.home() / ".executive-in-a-box"
 
 # Subdirectories created on first run
-SUBDIRS = ["org", "board", "board/archetypes", "sessions", "memory"]
+SUBDIRS = ["org", "board", "board/archetypes", "sessions", "memory", "jobs", "artifacts", "integrations"]
 
 # Files with restricted permissions (owner read/write only)
 # Note: API keys are stored in the OS keychain, not in files.
@@ -92,6 +92,29 @@ def write_json(relative_path: str, data: dict) -> Path:
     """Write a dict as JSON to the data directory."""
     content = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     return write_file(relative_path, content)
+
+
+SESSION_INDEX = "sessions/index.json"
+
+
+def read_session_index() -> list[dict]:
+    """Read the session index. Returns an empty list if it doesn't exist yet."""
+    path = get_data_dir() / SESSION_INDEX
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def append_session_index(entry: dict) -> None:
+    """Append a session entry to the index. Creates the index if needed."""
+    index = read_session_index()
+    index.append(entry)
+    path = get_data_dir() / SESSION_INDEX
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def list_sessions() -> list[Path]:

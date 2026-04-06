@@ -25,13 +25,20 @@ The tool does not:
 
 ## Trust Boundaries
 
+*Updated 2026-04-04 — see [ADR](decisions/2026-04-04-web-ui-pivot.md) for context on
+the web UI pivot, Tailscale exposure model, and Slack inbound deferral.*
+
 A trust boundary is any point where data or control crosses from one system to
 another. Every trust boundary is a potential risk surface.
 
-| Boundary | Present in MVP? | Risk |
-|----------|-----------------|------|
+| Boundary | Present in V1? | Risk |
+|----------|----------------|------|
 | User input → LLM provider API | Yes | Prompts and org context sent to external provider |
 | Local file system → LLM context | Yes | Context files must not contain secrets |
+| Local web server → browser (localhost) | Yes (V1) | Low — same machine; mitigated by local-only binding |
+| Local web server → Tailscale network | Optional (V1) | Medium — server accessible to all Tailscale peers; no auth layer in V1 |
+| Tool → Slack (outbound webhook) | Yes (V1) | Low — one-directional; only sends what user explicitly composes |
+| Slack → Tool (inbound events) | No (V2+) | Medium — external system pushing data to local server |
 | Tool → external integrations (LinkedIn, email, etc.) | No (V2+) | High — autonomous action on external systems |
 | Local → cloud sync | No (V2+) | Medium — data leaves machine |
 | Multi-user shared context | No (V2+) | Medium — data shared between people |
@@ -85,6 +92,27 @@ Mitigations:
 - Flags suspected secrets with a warning before sending
 - Documentation clearly instructs users not to store credentials in context files
 
+**T5 — Tailscale exposure with no auth layer**
+When the local server is bound to a Tailscale IP, any peer on the Tailscale network
+can access the instance — including all org context, session history, and artifacts.
+In V1 there is no authentication layer.
+
+Mitigations:
+- Default binding is `localhost` only; Tailscale exposure is an explicit opt-in
+- Documentation clearly explains that Tailscale exposure = network-level trust,
+  and advises users to treat Tailscale network membership as access control
+- Future milestone: auth layer before any hosted/public deployment
+
+**T6 — XSS / local web server**
+A locally-served web app that renders user-provided content (session history,
+org context, LLM responses) could be vulnerable to cross-site scripting if
+content is not properly escaped.
+
+Mitigations:
+- All user-provided and LLM-provided content must be HTML-escaped before rendering
+- No `eval()` or `innerHTML` with unescaped content
+- Content Security Policy headers set on local server responses
+
 ### V2+ Threats (document before implementing)
 
 **T5 — Autonomous external action**
@@ -124,10 +152,14 @@ Required mitigations before cloud storage ships:
 | Session transcripts | `sessions/` | Medium–High | Contains full prompts and responses |
 | LLM provider API keys | OS keychain or env var | High | Encrypted at rest; never in plaintext files |
 | Strategic memory | `memory/` | Medium | Running org context |
+| Job state | `jobs/` | Low | Job IDs, status, results — no credentials |
+| Session artifacts | `artifacts/` | Medium | Documents, analyses generated during sessions |
+| Slack webhook URL | local config | Low | Not a credential; a send-only URL |
 
-### What leaves the machine (MVP)
+### What leaves the machine (V1)
 
 - Prompts (including org context) sent to the configured LLM provider API
+- Messages explicitly composed and sent by the user to Slack (outbound webhook)
 - Nothing else
 
 ---

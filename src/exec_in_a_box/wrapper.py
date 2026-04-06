@@ -115,6 +115,13 @@ def load_org_context() -> str:
     if strategic_context:
         parts.append(f"STRATEGIC CONTEXT:\n{strategic_context.strip()}")
 
+    open_questions = storage.read_file("memory/open-questions.md")
+    if open_questions:
+        # Include only first 10 lines to keep context tight
+        lines = open_questions.strip().splitlines()
+        recent = "\n".join(lines[:10])
+        parts.append(f"OPEN QUESTIONS (flagged for resolution):\n{recent}")
+
     if not parts:
         return "No org context has been configured yet."
 
@@ -148,7 +155,7 @@ def build_prompt(
     system_prompt = archetype.build_system_prompt(safe_context)
 
     # Fetch any URLs in the user's question
-    from exec_in_a_box.web import extract_urls, fetch_urls_for_context
+    from exec_in_a_box.fetch import extract_urls, fetch_urls_for_context
 
     urls = extract_urls(user_question)
     web_context = ""
@@ -228,7 +235,46 @@ class ValidatedResponse:
     cons: list[str]
     flags: list[str]
     questions_for_user: list[str]
+    artifact: dict | None = None  # {"filename": str, "content": str} or None
     raw_json: dict = field(default_factory=dict)
+
+
+def _heal_json(text: str) -> str:
+    """Fix common LLM JSON formatting issues before parsing.
+
+    When archetypes use rich markdown inside JSON string values, models
+    sometimes emit literal newlines/tabs instead of the required escape
+    sequences (\\n, \\t).  This walks the text character-by-character and
+    replaces bare control characters inside string values with their JSON
+    escape equivalents.
+    """
+    result: list[str] = []
+    in_string = False
+    prev_backslash = False
+
+    for char in text:
+        if prev_backslash:
+            result.append(char)
+            prev_backslash = False
+        elif char == "\\" and in_string:
+            result.append(char)
+            prev_backslash = True
+        elif char == '"':
+            in_string = not in_string
+            result.append(char)
+        elif in_string:
+            if char == "\n":
+                result.append("\\n")
+            elif char == "\r":
+                result.append("\\r")
+            elif char == "\t":
+                result.append("\\t")
+            else:
+                result.append(char)
+        else:
+            result.append(char)
+
+    return "".join(result)
 
 
 def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError]:
@@ -252,11 +298,14 @@ def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError
         text = text[:-3]
     text = text.strip()
 
-    # Parse JSON
+    # Parse JSON — with a healing fallback for literal newlines inside strings
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as e:
-        return [ValidationError("_root", f"Response is not valid JSON: {e}")]
+    except json.JSONDecodeError:
+        try:
+            data = json.loads(_heal_json(text))
+        except json.JSONDecodeError as e:
+            return [ValidationError("_root", f"Response is not valid JSON: {e}")]
 
     if not isinstance(data, dict):
         return [ValidationError("_root", "Response is not a JSON object")]
@@ -310,6 +359,28 @@ def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError
     if errors:
         return errors
 
+    # Validate optional artifact field
+    artifact = data.get("artifact")
+    if artifact is not None:
+        if not isinstance(artifact, dict):
+            errors.append(ValidationError("artifact", "Must be an object or null"))
+        else:
+            if not isinstance(artifact.get("filename"), str) or not artifact["filename"].strip():
+                errors.append(ValidationError("artifact.filename", "Must be a non-empty string"))
+            if not isinstance(artifact.get("content"), str) or not artifact["content"].strip():
+                errors.append(ValidationError("artifact.content", "Must be a non-empty string"))
+            if not errors:
+                # Sanitize filename: strip path components, keep only safe chars
+                import re as _re
+                safe = _re.sub(r"[^\w\-.]", "-", artifact["filename"].strip())
+                safe = _re.sub(r"-+", "-", safe).strip("-")
+                if not safe:
+                    safe = "artifact.md"
+                artifact = {"filename": safe, "content": artifact["content"]}
+
+    if errors:
+        return errors
+
     return ValidatedResponse(
         archetype=data["archetype"],
         position=data["position"],
@@ -320,5 +391,6 @@ def validate_response(raw_text: str) -> ValidatedResponse | list[ValidationError
         cons=data["cons"],
         flags=data["flags"],
         questions_for_user=data["questions_for_user"],
+        artifact=artifact,
         raw_json=data,
     )

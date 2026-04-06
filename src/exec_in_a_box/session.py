@@ -1,19 +1,35 @@
 """Core session loop — the primary user interaction.
 
 User asks a strategic question, the board deliberates, user decides.
+Supports multi-CEO switching, Executize background jobs, and artifact commands.
 
-Reference: hacky-hours/02-design/USER_JOURNEYS.md § Journey 2
+Reference: hacky-hours/02-design/USER_JOURNEYS.md § Ask the CEO a Question
 Reference: hacky-hours/02-design/BUSINESS_LOGIC.md § Error Handling Contract
 """
 
 from __future__ import annotations
 
 import sys
+import threading
 from datetime import datetime
+from typing import Optional
 
 from exec_in_a_box import storage
-from exec_in_a_box.archetypes import get_archetype
-from exec_in_a_box.config import load_config
+from exec_in_a_box.archetypes import get_archetype, list_archetypes
+from exec_in_a_box.cli_display import (
+    C,
+    colorize,
+    divider,
+    print_banner,
+    print_ceo_header,
+    print_error,
+    print_executizing,
+    print_job_complete,
+    print_response,
+    print_thinking,
+    print_warning,
+)
+from exec_in_a_box.config import load_config, save_autonomy_level
 from exec_in_a_box.providers import ProviderError, create_provider
 from exec_in_a_box.wrapper import (
     ValidatedResponse,
@@ -30,73 +46,50 @@ def _input(prompt: str) -> str:
         sys.exit(0)
 
 
-def _display_response(response: ValidatedResponse, autonomy_level: int) -> None:
-    """Format and display a validated response to the user."""
-    print()
-    print(f"{'=' * 60}")
-    print(f"  {response.archetype}'s Position")
-    print(f"{'=' * 60}")
-    print()
-
-    if autonomy_level == 2:
-        print(f"  RECOMMENDATION: {response.position}")
-    else:
-        print(f"  {response.position}")
-    print()
-
-    print(f"  Confidence: {response.confidence.upper()}")
-    print()
-
-    print("  Pros:")
-    for pro in response.pros:
-        print(f"    + {pro}")
-    print()
-
-    print("  Cons:")
-    for con in response.cons:
-        print(f"    - {con}")
-    print()
-
-    if response.flags:
-        print("  Flags:")
-        for flag in response.flags:
-            print(f"    ! {flag}")
-        print()
-
-    if response.questions_for_user:
-        print("  Questions for you:")
-        for q in response.questions_for_user:
-            print(f"    ? {q}")
-        print()
-
-    print(f"{'=' * 60}")
+def _load_feedback(slug: str) -> "dict | None":
+    """Load stored feedback for a CEO archetype (returns None if not found)."""
+    from exec_in_a_box.server.routes.feedback import _load
+    return _load(slug)
 
 
-def _display_reasoning(response: ValidatedResponse) -> None:
-    """Show the full reasoning chain."""
-    print()
-    print(f"--- How {response.archetype} got here ---")
-    print()
-    print(f"  Ambition level: {response.ambition_level.replace('_', ' ')}")
-    print()
-    print(f"  {response.reasoning}")
-    print()
-    print("---")
+def _build_modification_message(original_question: str, original_position: str, feedback: str) -> str:
+    """Construct the user message for a modify re-run (mirrors server route)."""
+    return (
+        f"I previously asked you:\n{original_question}\n\n"
+        f"Your response was:\n{original_position}\n\n"
+        f"I have feedback on this response:\n{feedback}\n\n"
+        "Please revise your position based on my feedback. "
+        "Use the same JSON response format."
+    )
 
 
-def _get_decision(autonomy_level: int, has_slack: bool) -> str:
-    """Get the user's decision. Returns 'y', 'n', 'm', 'h', or 's'."""
-    slack_hint = " / [S]lack" if has_slack else ""
-    if autonomy_level == 2:
-        prompt = (
-            "Adopt this recommendation? "
-            f"[Y]es / [N]o / [M]odify{slack_hint}: "
-        )
-    else:
-        prompt = (
-            "Adopt this position? "
-            f"[Y]es / [N]o / [M]odify{slack_hint}: "
-        )
+def _get_decision(autonomy_level: int, has_slack: bool, allow_modify: bool = True) -> str:
+    """Get the user's decision. Returns 'y', 'n', 'm', 'h', or 's'.
+
+    allow_modify=False hides the Modify option (used on revised responses so
+    the loop is adopt/reject-only, matching the web behaviour).
+    """
+    slack_hint = " / " + colorize("[S]lack", C.LIME) if has_slack else ""
+    label = "recommendation" if autonomy_level == 2 else "position"
+    modify_hint = (
+        colorize("[M]odify", C.YELLOW) + colorize(" / ", C.DIM)
+        if allow_modify else ""
+    )
+    prompt = (
+        colorize(f"\n  Adopt this {label}? ", C.DIM)
+        + colorize("[Y]es", C.LIME) + colorize(" / ", C.DIM)
+        + colorize("[N]o", C.MAGENTA) + colorize(" / ", C.DIM)
+        + modify_hint
+        + colorize("[H]ow", C.CYAN) + colorize(" (reasoning)", C.DIM)
+        + slack_hint
+        + colorize(": ", C.DIM)
+    )
+
+    valid = {"y", "yes", "n", "no", "h", "how", "reasoning"}
+    if allow_modify:
+        valid |= {"m", "modify"}
+    if has_slack:
+        valid |= {"s", "slack"}
 
     while True:
         raw = _input(prompt).strip().lower()
@@ -104,99 +97,171 @@ def _get_decision(autonomy_level: int, has_slack: bool) -> str:
             return "y"
         if raw in ("n", "no"):
             return "n"
-        if raw in ("m", "modify"):
+        if raw in ("m", "modify") and allow_modify:
             return "m"
-        if raw in ("h", "how", "how did you get here", "reasoning"):
+        if raw in ("h", "how", "reasoning"):
             return "h"
         if raw in ("s", "slack") and has_slack:
             return "s"
-        options = "Y, N, M, H (reasoning)"
-        if has_slack:
-            options += ", S (Slack)"
-        print(f"  Enter {options}.")
+        opts = "Y, N, " + ("M, " if allow_modify else "") + "H" + (", S" if has_slack else "")
+        print(colorize(f"  Enter: {opts}", C.DIM))
 
 
-def _send_to_slack(response, config, archetype) -> None:
-    """Let user craft and send a message to Slack."""
-    from exec_in_a_box.slack import send_message
+def _send_to_slack(response: ValidatedResponse, config, archetype) -> None:
+    """Let user pick, preview, edit, and send a Slack message."""
+    import re as _re
+    from exec_in_a_box.slack import list_webhooks, send_message
 
-    print()
-    print("  What would you like to send to Slack?")
-    print()
-    print("  1. The recommendation as-is")
-    print("  2. Write a custom message")
-    print("  3. Cancel")
-    print()
-
-    try:
-        choice = _input("  Pick [1-3]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("\n  Cancelled.")
+    # ── Step 1: Pick webhook (only shown when multiple are configured) ────
+    webhooks = list_webhooks()
+    if not webhooks:
+        print(colorize("\n  No Slack webhooks configured. Run: exec-in-a-box slack setup\n", C.DIM))
         return
 
-    if choice == "1":
-        message = response.position
-    elif choice == "2":
+    chosen_webhook_id: str | None = None
+    if len(webhooks) > 1:
         print()
-        print("  Type your message (the CEO's advice is")
-        print("  available for reference above):")
+        print(colorize("  Which channel?", C.CYAN))
         print()
-        message = _input("  Message: ").strip()
-        if not message:
-            print("  Empty message. Cancelled.")
+        for i, w in enumerate(webhooks, 1):
+            print(colorize(f"  {i}. ", C.DIM) + f"{w.get('workspace', '?')} / {w.get('channel', '?')}")
+        print()
+        raw = _input(f"  Pick [1-{len(webhooks)}]: ").strip()
+        try:
+            widx = int(raw) - 1
+            if not (0 <= widx < len(webhooks)):
+                raise ValueError
+            chosen_webhook_id = webhooks[widx]["id"]
+        except (ValueError, KeyError):
+            print(colorize("  Invalid choice. Cancelled.", C.DIM))
             return
     else:
-        print("  Cancelled.")
-        return
+        chosen_webhook_id = webhooks[0]["id"]
 
-    # Always preview before sending
-    print()
-    print("  --- Preview ---")
-    print(f"  {message}")
-    print("  ---------------")
-    print()
-    confirm = _input(
-        "  Send this to Slack? "
-        "[Y]es / [E]dit / [C]ancel: "
-    ).strip().lower()
+    # Extract <announce> blocks; fall back to full position if none.
+    blocks = [m.strip() for m in _re.findall(
+        r"<announce>([\s\S]*?)<\/announce>", response.position, _re.IGNORECASE
+    )]
 
-    if confirm in ("e", "edit"):
+    def _pick_message() -> str | None:
+        """Return the chosen message text, or None to cancel."""
         print()
-        print("  Type the corrected message:")
+        print(colorize("  What would you like to send to Slack?", C.CYAN))
         print()
-        message = _input("  Message: ").strip()
+
+        options: list[tuple[str, str]] = []  # (label, text)
+
+        if blocks:
+            for i, block in enumerate(blocks, 1):
+                preview = block[:60].replace("\n", " ")
+                if len(block) > 60:
+                    preview += "…"
+                options.append((f"Announcement {i}", block))
+                print(colorize(f"  {i}. ", C.DIM) + f'"{preview}"')
+        else:
+            preview = response.position[:60].replace("\n", " ")
+            if len(response.position) > 60:
+                preview += "…"
+            options.append(("Full position", response.position))
+            print(colorize("  1. ", C.DIM) + f'"{preview}"')
+
+        n = len(options)
+        print(colorize(f"  {n + 1}. ", C.DIM) + "Write a custom message")
+        print(colorize(f"  {n + 2}. ", C.DIM) + "Cancel")
+        print()
+
+        raw = _input(f"  Pick [1-{n + 2}]: ").strip()
+        try:
+            idx = int(raw)
+        except ValueError:
+            return None
+
+        if idx == n + 2:
+            return None
+        if idx == n + 1:
+            print()
+            msg = _input(colorize("  Message: ", C.CYAN)).strip()
+            return msg if msg else None
+        if 1 <= idx <= n:
+            return options[idx - 1][1]
+        return None
+
+    def _preview_and_confirm(message: str) -> str | None:
+        """Show preview loop. Returns final message to send, or None to cancel."""
+        while True:
+            print()
+            print(colorize("  ─── Preview ───", C.DIM))
+            for line in message.splitlines():
+                print(f"  {line}")
+            print(colorize("  ───────────────", C.DIM))
+            print()
+
+            has_multiple = len(blocks) > 1
+            prompt = (
+                colorize("  Send to Slack? ", C.DIM)
+                + colorize("[S]end", C.LIME)
+                + colorize(" / ", C.DIM)
+                + colorize("[E]dit", C.YELLOW)
+            )
+            if has_multiple:
+                prompt += colorize(" / ", C.DIM) + colorize("[P]ick another", C.CYAN)
+            prompt += colorize(" / ", C.DIM) + colorize("[C]ancel", C.MAGENTA) + colorize(": ", C.DIM)
+
+            confirm = _input(prompt).strip().lower()
+
+            if confirm in ("s", "send", "y", "yes"):
+                return message
+            if confirm in ("e", "edit"):
+                print()
+                print(colorize("  Edit message (leave blank to keep current):", C.DIM))
+                # Show current text line by line with a prompt
+                edited = _input(colorize("  > ", C.CYAN)).strip()
+                if edited:
+                    message = edited
+                # Loop back to re-preview
+                continue
+            if has_multiple and confirm in ("p", "pick"):
+                return "PICK_AGAIN"
+            return None  # Cancel
+
+    # Main loop — allows re-picking if user selects [P]ick another
+    while True:
+        message = _pick_message()
         if not message:
-            print("  Empty message. Cancelled.")
+            print(colorize("  Cancelled.", C.DIM))
+            print()
             return
-        print()
-        print("  --- Preview ---")
-        print(f"  {message}")
-        print("  ---------------")
-        print()
-        confirm = _input(
-            "  Send this to Slack? [Y/N]: "
-        ).strip().lower()
 
-    if confirm not in ("y", "yes"):
-        print("  Cancelled.")
+        result = _preview_and_confirm(message)
+        if result == "PICK_AGAIN":
+            continue
+        if not result:
+            print(colorize("  Cancelled.", C.DIM))
+            print()
+            return
+
+        print()
+        print(colorize("  Sending to Slack...", C.CYAN), end=" ", flush=True)
+        success = send_message(
+            result,
+            webhook_id=chosen_webhook_id,
+            archetype_slug=config.archetype_slug,
+            archetype_name=archetype.name,
+        )
+        if success:
+            print(colorize("Sent!", C.LIME))
+        print()
         return
-
-    print("  Sending to Slack...", end=" ", flush=True)
-    success = send_message(
-        message,
-        archetype_slug=config.archetype_slug,
-        archetype_name=archetype.name,
-    )
-    if success:
-        print("Sent!")
-    print()
 
 
 def _log_decision(
     question: str,
     response: ValidatedResponse,
+    archetype_name: str,
     decision: str,
-    modification: str | None,
+    modification: Optional[str] = None,
+    reason: Optional[str] = None,
+    is_modification: bool = False,
 ) -> None:
     """Append the decision to the decisions log."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -205,12 +270,16 @@ def _log_decision(
     entry = (
         f"\n## {timestamp}\n\n"
         f"**Question:** {question}\n\n"
-        f"**Advisor:** {response.archetype} (confidence: {response.confidence})\n\n"
+        f"**Advisor:** {archetype_name} (confidence: {response.confidence})\n\n"
         f"**Position:** {response.position}\n\n"
         f"**Decision:** {decision_text}\n"
     )
     if modification:
         entry += f"\n**Modification:** {modification}\n"
+    if reason:
+        entry += f"\n**Reason:** {reason}\n"
+    if is_modification:
+        entry += "\n*(This was a revised response following a Modify re-run)*\n"
 
     storage.append_file("org/decisions.md", entry)
 
@@ -218,17 +287,22 @@ def _log_decision(
 def _save_session(
     question: str,
     response: ValidatedResponse,
+    archetype_name: str,
     decision: str,
-    modification: str | None,
+    modification: Optional[str],
+    archetype_slug: str = "",
+    reason: Optional[str] = None,
+    is_modification: bool = False,
 ) -> None:
-    """Save the full session transcript."""
+    """Save the full session transcript and update the session index."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     path = storage.next_session_path()
 
     content = (
         f"# Session — {timestamp}\n\n"
         f"## Question\n{question}\n\n"
-        f"## {response.archetype}'s Response\n\n"
+        f"## {archetype_name}'s Response\n\n"
+        f"**Archetype:** {archetype_slug}\n"
         f"**Position:** {response.position}\n\n"
         f"**Reasoning:** {response.reasoning}\n\n"
         f"**Confidence:** {response.confidence}\n"
@@ -253,109 +327,345 @@ def _save_session(
     content += f"\n## Decision\n{decision_text}\n"
     if modification:
         content += f"\n**Modification:** {modification}\n"
+    if reason:
+        content += f"\n**Reason:** {reason}\n"
+    if is_modification:
+        content += "\n*(This was a revised response following a Modify re-run)*\n"
 
     storage.write_file(str(path.relative_to(storage.get_data_dir())), content)
 
+    storage.append_session_index({
+        "id": path.stem,
+        "slug": archetype_slug,
+        "timestamp": timestamp,
+        "decision": decision_text,
+        "question": question[:120],
+        "position": response.position[:200],
+        "confidence": response.confidence,
+        "ambition_level": response.ambition_level,
+        "reason": reason or "",
+        "modification": modification or "",
+        "is_modification": is_modification,
+    })
 
-def run_session() -> None:
+
+def _switch_ceo_interactive() -> Optional[str]:
+    """Interactive CEO switcher. Returns new slug or None if cancelled."""
+    archetypes = list_archetypes()
+    print()
+    print(colorize("  Select CEO:", C.CYAN))
+    print()
+    for i, a in enumerate(archetypes, 1):
+        print(f"  {colorize(str(i), C.BOLD, C.WHITE)}. {a.name} {colorize('—', C.DIM)} {a.one_line}")
+    print()
+    raw = _input(
+        colorize(f"  Pick [1-{len(archetypes)}] or Enter to cancel: ", C.DIM)
+    ).strip()
+    if not raw:
+        return None
+    try:
+        idx = int(raw) - 1
+        if 0 <= idx < len(archetypes):
+            return archetypes[idx].slug
+    except ValueError:
+        pass
+    print(colorize("  Invalid choice.", C.DIM))
+    return None
+
+
+def _dispatch_executize_job(
+    archetype_slug: str,
+    question: str,
+    api_key: str,
+    provider_name: str,
+) -> Optional[str]:
+    """Dispatch an Executize job in a background thread. Returns job_id."""
+    from exec_in_a_box.jobs import create_job, _persist
+
+    job = create_job(archetype_name=archetype_slug, prompt=question)
+    job_id = job["id"]
+
+    def _run():
+        try:
+            job["status"] = "running"
+            _persist(job)
+
+            archetype = get_archetype(archetype_slug)
+            if archetype is None:
+                raise ValueError(f"Unknown archetype: {archetype_slug}")
+
+            from exec_in_a_box.credentials import get_api_key as _get_key
+            key = _get_key(provider_name) or api_key
+
+            provider = create_provider(provider_name, api_key=key)
+            system_prompt, user_message, _ = build_prompt(archetype, question)
+            response = provider.send(system_prompt, user_message)
+            result = validate_response(response.content)
+
+            if isinstance(result, list):
+                job["status"] = "failed"
+                job["error"] = "Response validation failed."
+            else:
+                import json
+                job["status"] = "complete"
+                job["result"] = json.dumps({
+                    "valid": True,
+                    "archetype": result.archetype,
+                    "position": result.position,
+                    "reasoning": result.reasoning,
+                    "confidence": result.confidence,
+                    "ambition_level": result.ambition_level,
+                    "pros": result.pros,
+                    "cons": result.cons,
+                    "flags": result.flags,
+                    "questions_for_user": result.questions_for_user,
+                })
+            _persist(job)
+        except Exception as exc:
+            job["status"] = "failed"
+            job["error"] = str(exc)
+            _persist(job)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return job_id
+
+
+def run_session(initial_slug: Optional[str] = None) -> None:
     """Run the interactive board session loop."""
     from exec_in_a_box.credentials import get_api_key
 
     config = load_config()
     if config is None:
-        print("No configuration found. Run: exec-in-a-box setup")
+        print_error("No configuration found. Run: exec-in-a-box setup")
         sys.exit(1)
 
-    archetype = get_archetype(config.archetype_slug)
+    active_slug = initial_slug or config.archetype_slug
+    archetype = get_archetype(active_slug)
     if archetype is None:
-        print(
-            f"Unknown archetype: {config.archetype_slug}. "
-            "Run: exec-in-a-box setup"
-        )
+        print_error(f"Unknown archetype: {active_slug}. Run: exec-in-a-box setup")
         sys.exit(1)
 
     api_key = get_api_key(config.provider_name)
     if api_key is None:
-        print(
-            "No API key found for "
-            f"{config.provider_name}. "
-            "Run: exec-in-a-box setup"
-        )
+        print_error(f"No API key found for {config.provider_name}. Run: exec-in-a-box setup")
         sys.exit(1)
 
-    # Enforce autonomy level bounds
-    if config.autonomy_level > 2:
-        print("Autonomy levels 3 and 4 are not available yet (coming in V1).")
-        print("Your level has been treated as Level 2 for this session.")
-        effective_level = 2
-    else:
-        effective_level = config.autonomy_level
+    effective_level = min(config.autonomy_level, 2)
 
-    print()
-    print(f"Executive in a Box — {archetype.name}")
-    print(f"Autonomy: Level {effective_level}")
-    print(
-        "Type your question, or 'quit' to exit."
-        " Include URLs to give the CEO web context."
-    )
-    print()
+    # Active background jobs: {job_id: archetype_slug}
+    active_jobs: dict[str, str] = {}
+
+    def _show_ceo_header() -> None:
+        fb = _load_feedback(active_slug)
+        print_ceo_header(
+            archetype.name,
+            effective_level,
+            config.provider_name,
+            one_line=archetype.one_line,
+            response_style_blurb=getattr(archetype, "response_style_blurb", ""),
+            feedback=fb,
+        )
+
+    print_banner()
+    _show_ceo_header()
 
     while True:
-        question = _input("> ").strip()
+        # Check for completed jobs before each prompt
+        for job_id in list(active_jobs.keys()):
+            from exec_in_a_box.jobs import get_job
+            job = get_job(job_id)
+            if job and job["status"] in ("complete", "failed"):
+                a_slug = active_jobs.pop(job_id)
+                a = get_archetype(a_slug)
+                a_name = a.name if a else a_slug
+                if job["status"] == "complete" and job.get("result"):
+                    print_job_complete(a_name)
+                    try:
+                        import json
+                        result_data = json.loads(job["result"])
+                        from exec_in_a_box.wrapper import ValidatedResponse as VR
+                        vr = VR(
+                            archetype=result_data["archetype"],
+                            position=result_data["position"],
+                            reasoning=result_data["reasoning"],
+                            confidence=result_data["confidence"],
+                            ambition_level=result_data["ambition_level"],
+                            pros=result_data["pros"],
+                            cons=result_data["cons"],
+                            flags=result_data["flags"],
+                            questions_for_user=result_data["questions_for_user"],
+                        )
+                        print_response(vr, effective_level, a_name)
+                    except Exception:
+                        print(colorize(f"  Result: {job['result'][:200]}", C.DIM))
+                else:
+                    print_error(f"{a_name}'s job failed: {job.get('error', 'Unknown error')}")
+
+        prompt_str = (
+            colorize("\n  ", C.DIM)
+            + colorize(f"[{archetype.name}]", C.BOLD, C.CYAN)
+            + colorize(" > ", C.DIM)
+        )
+        question = _input(prompt_str).strip()
+
         if not question:
             continue
-        if question.lower() in ("quit", "exit", "q"):
-            print("Session ended.")
+
+        # ---- Meta-commands ----
+        if question.lower() in ("/quit", "/exit", "quit", "exit", "q"):
+            print(colorize("\n  Session ended.", C.DIM))
             break
 
-        # Check for URLs and notify user
-        from exec_in_a_box.web import extract_urls
+        if question.lower() == "/switch":
+            new_slug = _switch_ceo_interactive()
+            if new_slug:
+                new_arch = get_archetype(new_slug)
+                if new_arch:
+                    archetype = new_arch
+                    active_slug = new_slug
+                    _show_ceo_header()
+            continue
+
+        if question.lower().startswith("/feedback"):
+            # Inline feedback view + toggle
+            fb = _load_feedback(active_slug)
+            parts = question.split(None, 1)
+            sub = parts[1].strip().lower() if len(parts) > 1 else ""
+
+            if sub == "toggle":
+                if fb is None:
+                    print(colorize("\n  No feedback yet. Run: exec-in-a-box feedback refresh\n", C.DIM))
+                else:
+                    from exec_in_a_box.server.routes.feedback import _save
+                    fb["active"] = not fb.get("active", True)
+                    _save(active_slug, fb)
+                    state = colorize("Adjusted", C.LIME) if fb["active"] else colorize("Baseline", C.DIM)
+                    print(colorize(f"\n  {archetype.name} → {state}\n", C.BOLD))
+            else:
+                # Show summary + trait modifiers
+                print()
+                print(colorize(f"  Feedback — {archetype.name}", C.BOLD, C.CYAN))
+                print()
+                if fb and fb.get("summary"):
+                    active_flag = fb.get("active", True)
+                    mode = colorize("● Adjusted active", C.LIME) if active_flag else colorize("○ Baseline active", C.DIM)
+                    print(colorize("  Summary: ", C.DIM) + f'"{fb["summary"]}"')
+                    print(colorize("  Mode:    ", C.DIM) + mode)
+                    adj = fb.get("trait_adjustments", {})
+                    nonzero = {t: v for t, v in adj.items() if abs(v) > 0.001}
+                    if nonzero:
+                        from exec_in_a_box.archetypes import TRAIT_LABELS
+                        print()
+                        for trait in TRAIT_LABELS:
+                            delta = adj.get(trait, 0.0)
+                            if abs(delta) < 0.001:
+                                continue
+                            sign_color = C.LIME if delta > 0 else C.MAGENTA
+                            print(
+                                colorize(f"    {trait:<22}", C.DIM)
+                                + colorize(f"{delta:+.2f}", sign_color)
+                            )
+                    print()
+                    print(colorize("  /feedback toggle", C.CYAN) + colorize(" — switch mode", C.DIM))
+                else:
+                    print(colorize("  No feedback synthesized yet.", C.DIM))
+                    print(colorize("  Run: exec-in-a-box feedback refresh", C.DIM))
+                print()
+            continue
+
+        if question.lower().startswith("/executize"):
+            # Extract message after the command
+            parts = question.split(None, 1)
+            msg = parts[1].strip() if len(parts) > 1 else ""
+            if not msg:
+                msg = _input(colorize(
+                    "  What should they work on? ", C.CYAN
+                )).strip()
+            if not msg:
+                print(colorize("  No prompt given. Cancelled.", C.DIM))
+                continue
+            job_id = _dispatch_executize_job(
+                active_slug, msg, api_key, config.provider_name
+            )
+            if job_id:
+                active_jobs[job_id] = active_slug
+                print_executizing(archetype.name, job_id)
+            continue
+
+        if question.lower() == "/jobs":
+            from exec_in_a_box.jobs import list_jobs
+            jobs = list_jobs()
+            if not jobs:
+                print(colorize("\n  No jobs yet.", C.DIM))
+            else:
+                print()
+                for j in jobs[:10]:
+                    short_id = j["id"][:8]
+                    status_color = {
+                        "queued": C.YELLOW,
+                        "running": C.CYAN,
+                        "complete": C.LIME,
+                        "failed": C.MAGENTA,
+                    }.get(j["status"], C.DIM)
+                    print(
+                        colorize(f"  {short_id}…", C.DIM)
+                        + " "
+                        + colorize(j["status"], status_color)
+                        + colorize(f" — {j['archetype']}: {j['prompt'][:50]}", C.DIM)
+                    )
+            continue
+
+        # Check for URLs
+        from exec_in_a_box.fetch import extract_urls
 
         urls = extract_urls(question)
         if urls:
             print()
             for url in urls:
-                print(f"  Fetching: {url}")
+                print(colorize(f"  Fetching: {url}", C.DIM))
 
-        # Build prompt (pre-call enforcement)
+        # Build prompt
         system_prompt, user_message, secret_matches = build_prompt(archetype, question)
 
-        # Handle secret detection
+        # Inject feedback calibration if active — this is the grading feedback loop
+        fb = _load_feedback(active_slug)
+        if fb and fb.get("active", True) and fb.get("system_prompt_addon"):
+            system_prompt = system_prompt + "\n\n" + fb["system_prompt_addon"]
+
+        # Handle secrets
         if secret_matches:
-            print()
-            print("  ! WARNING: Suspected secrets found in your context:")
+            print_warning("Suspected secrets found in your context:")
             for match in secret_matches:
                 source = match.file_path or "unknown"
                 line = f" (line {match.line_number})" if match.line_number else ""
-                print(f"    - {match.pattern_name} in {source}{line}: {match.matched_text}")
+                print(
+                    colorize(f"    - {match.pattern_name}", C.YELLOW)
+                    + colorize(f" in {source}{line}: {match.matched_text}", C.DIM)
+                )
             print()
-            print("  The matched content has been redacted before sending.")
-            confirm = _input("  Continue with redacted context? [Y/N]: ").strip().lower()
+            confirm = _input(
+                colorize("  Continue with redacted context? [Y/N]: ", C.DIM)
+            ).strip().lower()
             if confirm not in ("y", "yes"):
-                print("  Call cancelled. Remove the secret from your context files and try again.")
+                print(colorize("  Cancelled.", C.DIM))
                 continue
 
         # Call the LLM
-        print()
-        print(f"  {archetype.name} is thinking...", flush=True)
+        print_thinking(archetype.name)
 
         try:
-            provider = create_provider(
-                config.provider_name, api_key=api_key
-            )
+            provider = create_provider(config.provider_name, api_key=api_key)
             provider_response = provider.send(system_prompt, user_message)
         except ProviderError as e:
-            print(f"\n  {e.user_message}")
+            print_error(e.user_message)
             continue
 
-        # Validate response (post-call enforcement)
+        # Validate
         result = validate_response(provider_response.content)
 
         if isinstance(result, list):
-            # Validation failed
-            print("\n  The advisor's response couldn't be used (formatting issue).")
-            print("  Try rephrasing your question.")
-            # Log raw response to debug file
+            print_error("The advisor's response couldn't be parsed. Try rephrasing your question.")
             storage.append_file(
                 "debug.log",
                 f"\n--- Validation failure at {datetime.now().isoformat()} ---\n"
@@ -364,39 +674,113 @@ def run_session() -> None:
             )
             continue
 
-        # Display the response
-        _display_response(result, effective_level)
+        print_response(result, effective_level, archetype.name)
 
-        # Check if Slack is configured
-        from exec_in_a_box.slack import get_webhook_url, send_message
+        # Save artifact if the LLM produced one
+        if result.artifact:
+            from datetime import date
+            session_id = date.today().isoformat()
+            filename = result.artifact["filename"]
+            rel_path = f"artifacts/{session_id}/{filename}"
+            storage.write_file(rel_path, result.artifact["content"])
+            print(
+                colorize(f"\n  Artifact saved: ", C.DIM)
+                + colorize(filename, C.CYAN)
+                + colorize(f"  (~/.executive-in-a-box/{rel_path})", C.DIM)
+            )
 
-        has_slack = get_webhook_url() is not None
 
-        # Decision loop
+        from exec_in_a_box.slack import list_webhooks
+        has_slack = len(list_webhooks()) > 0
+
+        # ---- Decision loop ----
+        # Track whether we are in a modification revision cycle (Y/N only).
+        current_result = result
+        is_modification_cycle = False
+        slack_sent = False  # hide S option after a successful send
+
         while True:
-            decision = _get_decision(effective_level, has_slack)
+            decision = _get_decision(
+                effective_level,
+                has_slack and not slack_sent,
+                allow_modify=not is_modification_cycle,
+            )
+
             if decision == "h":
-                _display_reasoning(result)
+                print()
+                print(colorize(f"  ─── How {current_result.archetype} got here ───", C.CYAN))
+                print()
+                print(
+                    colorize("  Ambition level: ", C.DIM)
+                    + colorize(current_result.ambition_level.replace("_", " "), C.BOLD, C.WHITE)
+                )
+                print()
+                print(f"  {current_result.reasoning}")
+                print()
+                print(colorize("  ─────────────────────────────────────", C.CYAN))
                 continue
+
             if decision == "s":
-                _send_to_slack(result, config, archetype)
+                _send_to_slack(current_result, config, archetype)
+                slack_sent = True
                 continue
-            break
 
-        modification = None
-        if decision == "m":
-            modification = _input(
-                "  What would you change? "
+            if decision == "m":
+                feedback_text = _input(
+                    colorize("  What should be different? ", C.CYAN)
+                ).strip()
+                if not feedback_text:
+                    continue
+
+                # Log the modify decision immediately, then re-run
+                _log_decision(question, current_result, archetype.name, "m",
+                              modification=feedback_text, is_modification=False)
+                _save_session(question, current_result, archetype.name, "m",
+                              feedback_text, archetype.slug, is_modification=False)
+
+                # Re-run the LLM with revision context
+                revised_msg = _build_modification_message(
+                    question, current_result.position, feedback_text
+                )
+                print_thinking(archetype.name)
+
+                try:
+                    provider = create_provider(config.provider_name, api_key=api_key)
+                    rev_response = provider.send(system_prompt, revised_msg)
+                except ProviderError as e:
+                    print_error(e.user_message)
+                    break
+
+                rev_result = validate_response(rev_response.content)
+                if isinstance(rev_result, list):
+                    print_error("Couldn't parse the revised response.")
+                    break
+
+                current_result = rev_result
+                is_modification_cycle = True
+                print()
+                print(colorize("  ─── Revised Response ───", C.CYAN))
+                print_response(current_result, effective_level, archetype.name)
+                continue  # back to Y/N only
+
+            # decision is "y" or "n" — optional reason
+            label = "adopting" if decision == "y" else "rejecting"
+            reason_raw = _input(
+                colorize(f"  Reason for {label} (optional, Enter to skip): ", C.DIM)
             ).strip()
+            reason = reason_raw or None
 
-        # Log and save
-        _log_decision(question, result, decision, modification)
-        _save_session(question, result, decision, modification)
+            _log_decision(question, current_result, archetype.name, decision,
+                          reason=reason, is_modification=is_modification_cycle)
+            _save_session(question, current_result, archetype.name, decision,
+                          None, archetype.slug, reason=reason,
+                          is_modification=is_modification_cycle)
 
-        decision_text = {
-            "y": "Adopted",
-            "n": "Rejected",
-            "m": "Modified",
-        }[decision]
-        print(f"\n  Decision recorded: {decision_text}")
-        print()
+            decision_text = "Adopted" if decision == "y" else "Rejected"
+            reason_detail = f' — "{reason}"' if reason else ""
+            adj = " (revision)" if is_modification_cycle else ""
+            print(
+                colorize(f"\n  {decision_text}{reason_detail}{adj}", C.LIME)
+                + colorize(" · logged to decisions.md", C.DIM)
+            )
+            break

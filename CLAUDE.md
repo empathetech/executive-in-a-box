@@ -21,6 +21,27 @@ Design constraints live in `hacky-hours/02-design/`. Before implementing anythin
 
 Before adding any dependency or external service, check `hacky-hours/02-design/LICENSING.md` for compatibility with the project's chosen license.
 
+## CLI ↔ Web Parity Requirement
+
+This project has two interfaces: a web app and a CLI. They must stay in sync.
+The parity tracker lives in `hacky-hours/02-design/PARITY.md`.
+
+**The web app is the source of truth.** When the two interfaces diverge and it's
+ambiguous which behavior is correct, match the web. Port web UX decisions to the
+CLI using terminal equivalents (numbered menus, ANSI formatting, text bars).
+
+When you add, change, or remove a feature in **either** interface:
+1. Find the feature in `PARITY.md`.
+2. If the other interface shows `✅`, update it to match (web wins on ambiguity).
+3. If the other interface shows `❌` and the feature is not in *Intentional Divergences*, implement it.
+4. Update `PARITY.md` to reflect the new state.
+
+**Do not mark any feature task complete without updating `PARITY.md`.**
+
+Exceptions (listed in *Intentional Divergences* in PARITY.md):
+- Credential input lives in CLI only (security)
+- Visual/chart elements live in web only (terminal equivalent is text bars)
+
 ## Feature Audit Requirement
 
 Every PR that adds, changes, or removes a feature must be audited before merging.
